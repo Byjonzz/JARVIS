@@ -2,6 +2,19 @@ import sys
 import os
 import time
 
+# Todas las formas en las que Vosk podría interpretar "JARVIS"
+ALIAS_JARVIS = [
+    "jarvis",
+    "yarbis",
+    "yarvis",
+    "harvis",
+    "charbis",
+    "yarbys",
+    "djarvis",
+    "llarbis",
+    "yervis"
+]
+
 # --- SISTEMA DE LOGS INVISIBLE ---
 # Evita que Python explote por no tener una consola donde hacer "print()"
 log_file = open("guardia_log.txt", "w", encoding="utf-8")
@@ -44,16 +57,18 @@ def vigilar():
                 data = audio_queue.get()
                 if recognizer.AcceptWaveform(data):
                     resultado = json.loads(recognizer.Result())
-                    texto = resultado.get("text", "")
-                    if "jarvis" in texto:
-                        print(f"✨ ¡Despertar detectado a las {time.strftime('%H:%M:%S')}! Cediendo micrófono...")
+                    texto_escuchado = resultado.get("text", "").lower()
+        
+                    # 🟢 El nuevo gatillo a prueba de balas
+                    if any(alias in texto_escuchado for alias in ALIAS_JARVIS):
+                        print("🎙️ Palabra clave detectada. Desplegando interfaz...")
                         sys.stdout.flush()
                         despertar = True
 
         # --- MICRÓFONO LIBERADO ---
         print("🚀 Lanzando UI Principal de JARVIS...")
         sys.stdout.flush()
-        
+
         CREATE_NO_WINDOW = 0x08000000
         subprocess.run(["python", "main.py"], creationflags=CREATE_NO_WINDOW)
         
