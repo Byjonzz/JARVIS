@@ -178,17 +178,20 @@ class JarvisCore:
         self.audio_in_queue = asyncio.Queue()
         self.out_queue = asyncio.Queue()
         self.client = genai.Client(api_key=API_KEY)
+        self.despierto = False
 
     async def _listen_audio(self):
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
-            loop.call_soon_threadsafe(self.out_queue.put_nowait, indata.tobytes())
+            if self.despierto:
+                loop.call_soon_threadsafe(self.out_queue.put_nowait, indata.tobytes())
 
         stream = sd.InputStream(
             samplerate=SEND_SAMPLE_RATE,
             channels=CHANNELS,
             dtype="int16",
+            blocksize=8000, 
             callback=callback,
         )
         with stream:
@@ -198,14 +201,14 @@ class JarvisCore:
     async def _send_realtime(self, session):
         while True:
             chunk = await self.out_queue.get()
-            await session.send(
-                input={"data": chunk, "mime_type": "audio/pcm;rate=16000"}
+            await session.send_realtime_input(
+                audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000")
             )
 
     async def _receive_audio(self, session):
         async for response in session.receive():
             
-            # 1. Extraer el audio y las transcripciones (Nueva Sintaxis)
+            # 1. Extraer el audio y las transcripciones
             server_content = response.server_content
             if server_content is not None:
                 model_turn = server_content.model_turn
@@ -219,7 +222,7 @@ class JarvisCore:
                     if texto:
                         self.ui.puente.senal_transcripcion.emit(texto)
 
-            # 2. Manejar llamadas a las Herramientas (Nueva Sintaxis)
+            # 2. Manejar llamadas a las Herramientas
             if response.tool_call:
                 async def ejecutar_herramientas(llamadas):
                     respuestas_herramientas = []
@@ -255,7 +258,10 @@ class JarvisCore:
                             )
                         )
                     
-                    await session.send(input=respuestas_herramientas)
+                    # 🟢 RESTAURADO: Tu método original para herramientas
+                    await session.send_tool_response(
+                        function_responses=respuestas_herramientas
+                    )
 
                 asyncio.create_task(
                     ejecutar_herramientas(response.tool_call.function_calls)
@@ -279,9 +285,21 @@ class JarvisCore:
             await asyncio.to_thread(stream.write, chunk)
 
     async def run(self):
+        # 1. Convertimos tu catálogo viejo al formato estricto del nuevo SDK
+        lista_funciones = []
+        for t in TOOL_DECLARATIONS:
+            lista_funciones.append(
+                types.FunctionDeclaration(
+                    name=t["name"],
+                    description=t["description"],
+                    parameters=t["parameters"] # El SDK lo convierte a esquema automáticamente
+                )
+            )
+        
+        # 2. Creamos la configuración de conexión blindada
         config = types.LiveConnectConfig(
             response_modalities=["AUDIO"],
-            tools=[{"function_declarations": TOOL_DECLARATIONS}],
+            tools=[types.Tool(function_declarations=lista_funciones)],
             system_instruction=types.Content(
                 parts=[
                     types.Part.from_text(
@@ -309,8 +327,9 @@ class JarvisCore:
                         tg.create_task(self._receive_audio(session))
                         tg.create_task(self._play_audio())
             except Exception as e:
-                # 👇 Esta es la lupa de diagnóstico que nos dirá la verdad
-                print(f"\n🚨 ERROR CRÍTICO DE CONEXIÓN: {e}\n")
+                import traceback
+                print("\n🚨 DETALLE DEL ERROR CRÍTICO AL DESCUBIERTO:")
+                traceback.print_exc()
                 
                 self.ui.puente.senal_estado.emit("⚠️ RECONECTANDO...")
                 self.ui.puente.senal_log.emit(
