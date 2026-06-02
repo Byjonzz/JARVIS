@@ -198,17 +198,29 @@ class JarvisCore:
     async def _send_realtime(self, session):
         while True:
             chunk = await self.out_queue.get()
-            await session.send_realtime_input(
-                audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000")
+            await session.send(
+                input={"data": chunk, "mime_type": "audio/pcm;rate=16000"}
             )
 
     async def _receive_audio(self, session):
         async for response in session.receive():
-            if response.data:
-                self.audio_in_queue.put_nowait(response.data)
+            
+            # 1. Extraer el audio y las transcripciones (Nueva Sintaxis)
+            server_content = response.server_content
+            if server_content is not None:
+                model_turn = server_content.model_turn
+                if model_turn is not None:
+                    for part in model_turn.parts:
+                        if part.inline_data and part.inline_data.data:
+                            self.audio_in_queue.put_nowait(part.inline_data.data)
+                
+                if server_content.output_transcription and server_content.output_transcription.text:
+                    texto = server_content.output_transcription.text.strip()
+                    if texto:
+                        self.ui.puente.senal_transcripcion.emit(texto)
 
+            # 2. Manejar llamadas a las Herramientas (Nueva Sintaxis)
             if response.tool_call:
-
                 async def ejecutar_herramientas(llamadas):
                     respuestas_herramientas = []
                     for fc in llamadas:
@@ -221,15 +233,11 @@ class JarvisCore:
                             if name == "open_app":
                                 resultado = await asyncio.to_thread(open_app, args)
                             elif name == "computer_control":
-                                resultado = await asyncio.to_thread(
-                                    computer_control, args
-                                )
+                                resultado = await asyncio.to_thread(computer_control, args)
                             elif name == "screen_vision":
                                 resultado = await asyncio.to_thread(screen_vision, args)
                             elif name == "system_monitor":
-                                resultado = await asyncio.to_thread(
-                                    system_monitor, args
-                                )
+                                resultado = await asyncio.to_thread(system_monitor, args)
                             elif name == "auto_programmer":
                                 resultado = await asyncio.to_thread(auto_programmer, args)
                             elif name == "tirar_dado":
@@ -246,9 +254,8 @@ class JarvisCore:
                                 id=fc.id, name=name, response={"result": str(resultado)}
                             )
                         )
-                    await session.send_tool_response(
-                        function_responses=respuestas_herramientas
-                    )
+                    
+                    await session.send(input=respuestas_herramientas)
 
                 asyncio.create_task(
                     ejecutar_herramientas(response.tool_call.function_calls)
@@ -302,6 +309,9 @@ class JarvisCore:
                         tg.create_task(self._receive_audio(session))
                         tg.create_task(self._play_audio())
             except Exception as e:
+                # 👇 Esta es la lupa de diagnóstico que nos dirá la verdad
+                print(f"\n🚨 ERROR CRÍTICO DE CONEXIÓN: {e}\n")
+                
                 self.ui.puente.senal_estado.emit("⚠️ RECONECTANDO...")
                 self.ui.puente.senal_log.emit(
                     "SYS: Conexión perdida. Reconectando en 2s..."
