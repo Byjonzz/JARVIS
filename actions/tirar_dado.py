@@ -14,3 +14,16 @@ def tirar_dado(parameters: dict) -> str:
     """
     resultado = random.randint(1, 6)
     return f"El dado cayó en: {resultado}"
+
+
+TOOL_DEF = {
+    "name": "tirar_dado",
+    "description": "Lanza un dado virtual de 6 caras y devuelve el resultado. Úsalo cuando el usuario pida tirar un dado o probar su suerte.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "action": {"type": "STRING", "description": "lanzar"}
+        },
+        "required": ["action"]
+    }
+}

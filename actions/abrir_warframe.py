@@ -1,5 +1,6 @@
 import webbrowser
 
+
 def abrir_warframe(parameters: dict) -> str:
     """
     Abre el juego Warframe utilizando su ID de Steam.
@@ -21,3 +22,14 @@ def abrir_warframe(parameters: dict) -> str:
         return f"Intentando abrir Warframe (ID de Steam: {warframe_steam_id}). Si Steam está instalado y en ejecución, el juego debería iniciarse."
     except Exception as e:
         return f"Error al intentar abrir Warframe: {e}. Asegúrate de que Steam esté instalado y configurado para manejar enlaces 'steam://'."
+
+
+TOOL_DEF = {
+    "name": "abrir_warframe",
+    "description": "Abre el juego Warframe directamente en la cuenta del usuario. Úsalo cuando el usuario quiera jugar Warframe y no quiera pasar por el launcher.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {"action": {"type": "STRING", "description": "abrir_warframe"}},
+        "required": ["action"],
+    },
+}
