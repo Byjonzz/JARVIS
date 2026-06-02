@@ -19,6 +19,8 @@ from actions.auto_programmer import auto_programmer
 from actions.tirar_dado import tirar_dado
 from actions.abrir_warframe import abrir_warframe
 from actions.web_search import web_search
+from actions.os_control import os_control
+from actions.file_organizer import file_organizer
 from ui import JarvisUI
 from dotenv import load_dotenv
 
@@ -133,6 +135,30 @@ TOOL_DECLARATIONS = [
                 "query": {"type": "STRING", "description": "La consulta de búsqueda que quieres realizar."}
             },
             "required": ["query"]
+        }
+    },
+    {
+        "name": "os_control",
+        "description": "Controla el hardware del sistema operativo Windows, como el volumen nativo o las ventanas.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "set_volume | minimize_all"},
+                "level": {"type": "NUMBER", "description": "Nivel de volumen entre 0.0 y 1.0 (ej: 0.5 para 50%)"}
+            },
+            "required": ["action"]
+        }
+    },
+    {
+        "name": "file_organizer",
+        "description": "Escanea una carpeta en el disco duro para buscar y eliminar archivos duplicados exactos usando sumas de verificación MD5.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {"type": "STRING", "description": "find_duplicates"},
+                "folder_path": {"type": "STRING", "description": "La ruta absoluta de la carpeta a limpiar en Windows."}
+            },
+            "required": ["action", "folder_path"]
         }
     }
 ]
@@ -249,6 +275,10 @@ class JarvisCore:
                                 resultado = await asyncio.to_thread(abrir_warframe, args)
                             elif name == "web_search":
                                 resultado = await asyncio.to_thread(web_search, args)
+                            elif name == "os_control":
+                                resultado = await asyncio.to_thread(os_control, args)
+                            elif name == "file_organizer":
+                                resultado = await asyncio.to_thread(file_organizer, args)
                         except Exception as e:
                             resultado = f"Error: {e}"
 
