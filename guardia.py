@@ -36,8 +36,10 @@ SetLogLevel(-1)
 def lanzar_jarvis():
     print("🚀 Lanzando UI Principal de JARVIS...")
     sys.stdout.flush()
-    CREATE_NO_WINDOW = 0x08000000
-    subprocess.run(["python", "main.py"], creationflags=CREATE_NO_WINDOW)
+    
+    # 🟢 Lanzamiento limpio. Dejamos que PyQt6 tome el control de la pantalla libremente
+    subprocess.run([sys.executable, "main.py"])
+    
     print("💤 UI cerrada por el usuario. Retomando guardia...")
     sys.stdout.flush()
     time.sleep(1)
@@ -57,8 +59,8 @@ def vigilar():
     def callback(indata, frames, time_info, status):
         audio_queue.put(bytes(indata))
         
-    keyboard.add_hotkey('ctrl+alt+j', lanzar_jarvis)
-    print("⌨️ Atajo global activado: Ctrl + Alt + J")
+    keyboard.add_hotkey('ctrl+shift+j', lanzar_jarvis)
+    print("⌨️ Atajo global activado: Ctrl + Shift + J")
     sys.stdout.flush()
 
     while True:
