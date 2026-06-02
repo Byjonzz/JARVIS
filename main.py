@@ -100,8 +100,8 @@ class JarvisCore:
         self.audio_in_queue = asyncio.Queue()
         self.out_queue = asyncio.Queue()
         self.client = genai.Client(api_key=API_KEY)
-        
         self.is_speaking = False 
+        self.memoria_corta = []
 
     async def _listen_audio(self):
         loop = asyncio.get_event_loop()
@@ -151,21 +151,20 @@ class JarvisCore:
                             except Exception as e:
                                 resultado = f"Error interno en la herramienta: {e}"
 
+                            # GUARDAMOS EL RESULTADO EN LA MEMORIA
+                            self.memoria_corta.append(f"[ACCIÓN]: Intentaste usar '{name}' y el resultado fue: {resultado}")
+                            if len(self.memoria_corta) > 6: self.memoria_corta.pop(0) # Solo recordamos las últimas 6 cosas
+
                             respuestas_herramientas.append(
                                 types.FunctionResponse(
                                     id=fc.id, name=name, response={"result": str(resultado)}
                                 )
                             )
                         
-                        # Pausa de seguridad para evitar colisiones de red
                         await asyncio.sleep(0.1)
-                        await session.send_tool_response(
-                            function_responses=respuestas_herramientas
-                        )
+                        await session.send_tool_response(function_responses=respuestas_herramientas)
 
-                    asyncio.create_task(
-                        ejecutar_herramientas(response.tool_call.function_calls)
-                    )
+                    asyncio.create_task(ejecutar_herramientas(response.tool_call.function_calls))
 
                 if response.server_content:
                     sc = response.server_content
@@ -174,63 +173,85 @@ class JarvisCore:
                         if texto:
                             self.ui.puente.senal_transcripcion.emit(texto)
                             
+                            # GUARDAMOS LO QUE JARVIS TE ACABA DE DECIR EN SU MEMORIA
+                            self.memoria_corta.append(f"[TÚ DIJISTE]: {texto}")
+                            if len(self.memoria_corta) > 6: self.memoria_corta.pop(0)
+                            
             raise ConnectionError("Google cerró el turno de voz.")
             
         except Exception as e:
-            # Destruimos el TaskGroup atorado para reiniciar el ciclo
             raise RuntimeError(f"Reinicio forzado: {e}")
 
     async def _play_audio(self):
         stream = sd.RawOutputStream(
             samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16"
         )
-        stream.start()
-        while True:
-            chunk = await self.audio_in_queue.get()
-            
-            self.is_speaking = True 
-            await asyncio.to_thread(stream.write, chunk)
-            
-            if self.audio_in_queue.empty():
-                self.is_speaking = False
+        # 🟢 NUEVO: El 'with' asegura que la tarjeta de audio se libere al reiniciar
+        with stream:
+            stream.start()
+            while True:
+                chunk = await self.audio_in_queue.get()
+                
+                self.is_speaking = True 
+                await asyncio.to_thread(stream.write, chunk)
+                
+                if self.audio_in_queue.empty():
+                    self.is_speaking = False
 
     async def run(self):
         tools = [{"function_declarations": TOOL_DECLARATIONS}] if TOOL_DECLARATIONS else None
         
-        config = types.LiveConnectConfig(
-            response_modalities=["AUDIO"],
-            tools=tools,
-            system_instruction=types.Content(
-                parts=[
-                    types.Part.from_text(
-                        text="Eres J.A.R.V.I.S., un asistente virtual. "
-                        "Tu creador es Jonathan. "
-                        "REGLAS: Habla en español, sé conciso y usa un tono estilo Iron Man."
-                    )
-                ]
-            ),
-        )
-
         while True:
             try:
+                # 🟢 CONSTRUIMOS SU CEREBRO DE FORMA DINÁMICA CON SU MEMORIA
+                instruccion_base = (
+                    "Eres J.A.R.V.I.S., un asistente virtual. "
+                    "Tu creador es Jonathan. "
+                    "REGLAS: Habla en español, sé conciso y usa un tono estilo Iron Man."
+                )
+                
+                # Si hay cosas en la libreta, se las inyectamos como recuerdos
+                if self.memoria_corta:
+                    historial = "\n".join(self.memoria_corta)
+                    instruccion_base += f"\n\n--- TUS RECUERDOS RECIENTES ---\n{historial}\n------------------\nUsa estos recuerdos para entender el contexto si el usuario te responde con un 'sí', 'no', o te da una orden ambigua."
+
+                config = types.LiveConnectConfig(
+                    response_modalities=["AUDIO"],
+                    tools=tools,
+                    system_instruction=types.Content(
+                        parts=[types.Part.from_text(text=instruccion_base)]
+                    ),
+                )
+
                 self.ui.puente.senal_estado.emit("🔌 CONECTANDO...")
                 async with self.client.aio.live.connect(
                     model=MODEL, config=config
                 ) as session:
                     self.ui.puente.senal_estado.emit("🟢 EN LÍNEA")
-                    self.ui.puente.senal_log.emit(
-                        "SYS: Conexión establecida. JARVIS escuchando."
-                    )
+                    self.ui.puente.senal_log.emit("SYS: Conexión establecida. JARVIS escuchando.")
                     async with asyncio.TaskGroup() as tg:
                         tg.create_task(self._listen_audio())
                         tg.create_task(self._send_realtime(session))
                         tg.create_task(self._receive_audio(session))
                         tg.create_task(self._play_audio())
             except Exception as e:
-                # Si el turno de voz acaba, el sistema entra aquí, espera 1 segundo y vuelve a conectar al instante.
-                self.ui.puente.senal_estado.emit("⚠️ RECONECTANDO...")
-                self.ui.puente.senal_log.emit("SYS: Preparando siguiente turno...")
-                await asyncio.sleep(1)
+                # 🟢 Reseteamos el micrófono por seguridad
+                self.is_speaking = False 
+                error_str = str(e)
+                
+                # 🟢 Filtro Inteligente: Si es nuestro "Caza-Zombies", el reinicio es silencioso y ultra rápido
+                if "TaskGroup" in error_str or "cerró el turno" in error_str:
+                    self.ui.puente.senal_estado.emit("⚡ PENSANDO...")
+                    self.ui.puente.senal_log.emit("SYS: Procesando contexto y preparando siguiente turno...")
+                    await asyncio.sleep(0.2) # Reinicio casi instantáneo
+                else:
+                    # Si es un error de verdad, mostramos la alerta
+                    self.ui.puente.senal_estado.emit("⚠️ RECONECTANDO...")
+                    if len(error_str) > 100: 
+                        error_str = error_str[:100] + "... [Audio Binario Descartado]"
+                    self.ui.puente.senal_log.emit(f"SYS: Fallo de conexión: {error_str}")
+                    print(f"🔥 ERROR REAL: {error_str}") 
+                    await asyncio.sleep(2)
 
 
 def iniciar_cerebro(ui):
