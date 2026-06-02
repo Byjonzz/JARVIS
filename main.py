@@ -28,7 +28,6 @@ MODEL = "gemini-3.1-flash-live-preview"
 
 SetLogLevel(-1)
 
-# --- 🧠 SISTEMA DE AUTO-DESCUBRIMIENTO (PLUGIN ARCHITECTURE) ---
 TOOL_DECLARATIONS = []
 FUNCIONES_DISPONIBLES = {}
 
@@ -101,12 +100,15 @@ class JarvisCore:
         self.audio_in_queue = asyncio.Queue()
         self.out_queue = asyncio.Queue()
         self.client = genai.Client(api_key=API_KEY)
+        
+        self.is_speaking = False 
 
     async def _listen_audio(self):
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
-            loop.call_soon_threadsafe(self.out_queue.put_nowait, indata.tobytes())
+            if not getattr(self, 'is_speaking', False):
+                loop.call_soon_threadsafe(self.out_queue.put_nowait, indata.tobytes())
 
         stream = sd.InputStream(
             samplerate=SEND_SAMPLE_RATE,
@@ -127,47 +129,56 @@ class JarvisCore:
             )
 
     async def _receive_audio(self, session):
-        async for response in session.receive():
-            if response.data:
-                self.audio_in_queue.put_nowait(response.data)
+        try:
+            async for response in session.receive():
+                if response.data:
+                    self.audio_in_queue.put_nowait(response.data)
 
-            if response.tool_call:
-                async def ejecutar_herramientas(llamadas):
-                    respuestas_herramientas = []
-                    for fc in llamadas:
-                        name = fc.name
-                        args = dict(fc.args) if fc.args else {}
-                        self.ui.puente.senal_log.emit(f"⚙️ JARVIS ejecutando: {name}")
+                if response.tool_call:
+                    async def ejecutar_herramientas(llamadas):
+                        respuestas_herramientas = []
+                        for fc in llamadas:
+                            name = fc.name
+                            args = dict(fc.args) if fc.args else {}
+                            self.ui.puente.senal_log.emit(f"⚙️ JARVIS ejecutando: {name}")
 
-                        resultado = "Herramienta desconocida."
-                        try:
-                            # 🟢 EJECUCIÓN DINÁMICA: Adiós al código espagueti de elifs
-                            if name in FUNCIONES_DISPONIBLES:
-                                resultado = await asyncio.to_thread(FUNCIONES_DISPONIBLES[name], args)
-                            else:
-                                resultado = f"Herramienta '{name}' no está registrada en el sistema."
-                        except Exception as e:
-                            resultado = f"Error interno en la herramienta: {e}"
+                            resultado = "Herramienta desconocida."
+                            try:
+                                if name in FUNCIONES_DISPONIBLES:
+                                    resultado = await asyncio.to_thread(FUNCIONES_DISPONIBLES[name], args)
+                                else:
+                                    resultado = f"Herramienta '{name}' no está registrada en el sistema."
+                            except Exception as e:
+                                resultado = f"Error interno en la herramienta: {e}"
 
-                        respuestas_herramientas.append(
-                            types.FunctionResponse(
-                                id=fc.id, name=name, response={"result": str(resultado)}
+                            respuestas_herramientas.append(
+                                types.FunctionResponse(
+                                    id=fc.id, name=name, response={"result": str(resultado)}
+                                )
                             )
+                        
+                        # Pausa de seguridad para evitar colisiones de red
+                        await asyncio.sleep(0.1)
+                        await session.send_tool_response(
+                            function_responses=respuestas_herramientas
                         )
-                    await session.send_tool_response(
-                        function_responses=respuestas_herramientas
+
+                    asyncio.create_task(
+                        ejecutar_herramientas(response.tool_call.function_calls)
                     )
 
-                asyncio.create_task(
-                    ejecutar_herramientas(response.tool_call.function_calls)
-                )
-
-            if response.server_content:
-                sc = response.server_content
-                if sc.output_transcription and sc.output_transcription.text:
-                    texto = sc.output_transcription.text.strip()
-                    if texto:
-                        self.ui.puente.senal_transcripcion.emit(texto)
+                if response.server_content:
+                    sc = response.server_content
+                    if sc.output_transcription and sc.output_transcription.text:
+                        texto = sc.output_transcription.text.strip()
+                        if texto:
+                            self.ui.puente.senal_transcripcion.emit(texto)
+                            
+            raise ConnectionError("Google cerró el turno de voz.")
+            
+        except Exception as e:
+            # Destruimos el TaskGroup atorado para reiniciar el ciclo
+            raise RuntimeError(f"Reinicio forzado: {e}")
 
     async def _play_audio(self):
         stream = sd.RawOutputStream(
@@ -176,10 +187,14 @@ class JarvisCore:
         stream.start()
         while True:
             chunk = await self.audio_in_queue.get()
+            
+            self.is_speaking = True 
             await asyncio.to_thread(stream.write, chunk)
+            
+            if self.audio_in_queue.empty():
+                self.is_speaking = False
 
     async def run(self):
-        # 🟢 Pasamos las herramientas dinámicas al modelo de Google
         tools = [{"function_declarations": TOOL_DECLARATIONS}] if TOOL_DECLARATIONS else None
         
         config = types.LiveConnectConfig(
@@ -212,10 +227,9 @@ class JarvisCore:
                         tg.create_task(self._receive_audio(session))
                         tg.create_task(self._play_audio())
             except Exception as e:
+                # Si el turno de voz acaba, el sistema entra aquí, espera 1 segundo y vuelve a conectar al instante.
                 self.ui.puente.senal_estado.emit("⚠️ RECONECTANDO...")
-                self.ui.puente.senal_log.emit(
-                    "SYS: Conexión perdida. Reconectando en 2s..."
-                )
+                self.ui.puente.senal_log.emit("SYS: Preparando siguiente turno...")
                 await asyncio.sleep(1)
 
 
