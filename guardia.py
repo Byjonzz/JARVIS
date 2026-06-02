@@ -1,48 +1,47 @@
 import sys
 import os
 import time
-
-# Todas las formas en las que Vosk podría interpretar "JARVIS"
-ALIAS_JARVIS = [
-    "jarvis",
-    "yarbis",
-    "yarvis",
-    "harvis",
-    "charbis",
-    "yarbys",
-    "djarvis",
-    "llarbis",
-    "yervis"
-]
+import queue
+import json
+import subprocess
+import sounddevice as sd
+from vosk import Model, KaldiRecognizer, SetLogLevel
+import keyboard
 
 # --- SISTEMA DE LOGS INVISIBLE ---
-# Evita que Python explote por no tener una consola donde hacer "print()"
 log_file = open("guardia_log.txt", "w", encoding="utf-8")
 sys.stdout = log_file
 sys.stderr = log_file
 
 print(f"[{time.strftime('%H:%M:%S')}] Iniciando sistema de vigilancia silencioso...")
-sys.stdout.flush() # Obliga a guardar el texto inmediatamente en el .txt
-
-import queue
-import json
-import subprocess
-import keyboard
-import sounddevice as sd
-from vosk import Model, KaldiRecognizer, SetLogLevel
+sys.stdout.flush()
 
 SetLogLevel(-1)
 
+jarvis_en_pantalla = False
+
 def lanzar_jarvis():
+    global jarvis_en_pantalla
+    
+    # Si el candado está puesto (la interfaz ya existe), ignoramos el doble teclazo
+    if jarvis_en_pantalla:
+        return
+        
+    # Ponemos el candado
+    jarvis_en_pantalla = True
     print("🚀 Lanzando UI Principal de JARVIS...")
     sys.stdout.flush()
     
-    # 🟢 Lanzamiento limpio. Dejamos que PyQt6 tome el control de la pantalla libremente
+    # Lanzamiento de la interfaz
     subprocess.run([sys.executable, "main.py"])
     
-    print("💤 UI cerrada por el usuario. Retomando guardia...")
+    # Cuando la interfaz se cierra, el código llega aquí
+    print("💤 UI cerrada por el usuario. Retomando guardia en 1 segundo...")
     sys.stdout.flush()
     time.sleep(1)
+    
+    # Quitamos el candado para el futuro
+    jarvis_en_pantalla = False
 
 def vigilar():
     try:
@@ -58,13 +57,17 @@ def vigilar():
 
     def callback(indata, frames, time_info, status):
         audio_queue.put(bytes(indata))
-        
+
+    # 🟢 Asignamos el atajo global
     keyboard.add_hotkey('ctrl+shift+j', lanzar_jarvis)
     print("⌨️ Atajo global activado: Ctrl + Shift + J")
     sys.stdout.flush()
 
+    # Red fonética para entender "Jarvis" con cualquier acento
+    ALIAS_JARVIS = ["jarvis", "yarbis", "yarvis", "harvis", "charbis", "yarbys", "djarvis", "llarbis", "yervis"]
+
     while True:
-        print("🛡️ Guardia en posición. Esperando la palabra 'Jarvis' o el atajo de teclado...")
+        print("🛡️ Guardia en posición. Esperando voz o teclado...")
         sys.stdout.flush() 
         
         with sd.RawInputStream(samplerate=16000, blocksize=8000, dtype='int16', channels=1, callback=callback):
@@ -73,32 +76,13 @@ def vigilar():
                 data = audio_queue.get()
                 if recognizer.AcceptWaveform(data):
                     resultado = json.loads(recognizer.Result())
-                    texto = resultado.get("text", "")
-                    # Usamos la validación fonética que platicamos
-                    if any(alias in texto for alias in ["jarvis", "yarbis", "harvis"]):
-                        print("✨ ¡Despertar por voz detectado!")
+                    texto = resultado.get("text", "").lower()
+                    
+                    # 🟢 Solo despertamos por voz si no hay candado puesto
+                    if any(alias in texto for alias in ALIAS_JARVIS) and not jarvis_en_pantalla:
+                        print(f"✨ ¡Despertar por voz detectado a las {time.strftime('%H:%M:%S')}!")
                         sys.stdout.flush()
                         despertar = True
 
-        # Lanzar la UI si se detectó la voz
-        lanzar_jarvis()
-
-        # --- MICRÓFONO LIBERADO ---
-        print("🚀 Lanzando UI Principal de JARVIS...")
-        sys.stdout.flush()
-
-        CREATE_NO_WINDOW = 0x08000000
-        subprocess.run(["python", "main.py"], creationflags=CREATE_NO_WINDOW)
-        
-        # Cuando el usuario hace clic en la X de la ventana, el código sigue aquí:
-        print("💤 UI cerrada por el usuario. Retomando guardia en 1 segundos...")
-        sys.stdout.flush()
-        time.sleep(1)
-
-if __name__ == "__main__":
-    try:
-        vigilar()
-    except KeyboardInterrupt:
-        print("🛑 Guardia apagado por interrupción.")
-        sys.stdout.flush()
-        sys.exit(0)
+        if despertar:
+            lanzar_jarvis()
