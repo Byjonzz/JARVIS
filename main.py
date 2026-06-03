@@ -102,13 +102,49 @@ class JarvisCore:
         self.client = genai.Client(api_key=API_KEY)
         self.is_speaking = False 
         self.memoria_corta = []
+        
+        # 🟢 NUEVO: SISTEMA DE BLOQUEO (TIPO ALEXA)
+        self.mic_abierto = False
+        self.vosk_model = Model("vosk_model")
+        self.recognizer = KaldiRecognizer(self.vosk_model, SEND_SAMPLE_RATE)
+        self.ALIAS = ["jarvis", "yarbis", "yarvis", "harvis", "charbis", "yarbys", "djarvis", "llarbis", "yervis"]
 
     async def _listen_audio(self):
         loop = asyncio.get_event_loop()
 
         def callback(indata, frames, time_info, status):
-            if not getattr(self, 'is_speaking', False):
-                loop.call_soon_threadsafe(self.out_queue.put_nowait, indata.tobytes())
+            # 1. Si JARVIS está hablando, le ponemos candado al micro inmediatamente
+            if getattr(self, 'is_speaking', False):
+                if self.mic_abierto:
+                    self.mic_abierto = False
+                    self.recognizer.Reset() # Limpiamos la memoria de Vosk
+                    loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🛡️ MODO SUSPENSIÓN")
+                return
+
+            data_bytes = bytes(indata)
+            
+            # 2. Si el micro está bloqueado, Vosk funciona como "Portero"
+            if not self.mic_abierto:
+                # Buscamos la palabra en tiempo real (fracciones de segundo)
+                resultado_parcial = json.loads(self.recognizer.PartialResult())
+                texto_parcial = resultado_parcial.get("partial", "").lower()
+                
+                # Buscamos también cuando terminas la frase
+                if self.recognizer.AcceptWaveform(data_bytes):
+                    resultado_completo = json.loads(self.recognizer.Result())
+                    texto_completo = resultado_completo.get("text", "").lower()
+                else:
+                    texto_completo = ""
+
+                # Si detecta tu voz llamándolo...
+                if any(alias in texto_parcial for alias in self.ALIAS) or any(alias in texto_completo for alias in self.ALIAS):
+                    self.mic_abierto = True
+                    loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🟢 ESCUCHANDO...")
+                    loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Activación por voz detectada. Abriendo micrófono...")
+            
+            # 3. Si el micro YA está abierto, mandamos tu voz a la IA de Google
+            else:
+                loop.call_soon_threadsafe(self.out_queue.put_nowait, data_bytes)
 
         stream = sd.InputStream(
             samplerate=SEND_SAMPLE_RATE,
@@ -117,6 +153,8 @@ class JarvisCore:
             blocksize=8000,
             callback=callback,
         )
+        
+        loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🛡️ MODO SUSPENSIÓN")
         with stream:
             while True:
                 await asyncio.sleep(0.1)
@@ -151,7 +189,6 @@ class JarvisCore:
                             except Exception as e:
                                 resultado = f"Error interno en la herramienta: {e}"
 
-                            # 🧠 UPGRADE DE MEMORIA: Ahora JARVIS recuerda QUÉ hizo y CÓMO lo hizo
                             self.memoria_corta.append(f"[ACCIÓN PASADA]: Ejecutaste '{name}' con estos parámetros: {args}. Resultado: {resultado}")
                             if len(self.memoria_corta) > 6: self.memoria_corta.pop(0)
 
@@ -173,7 +210,6 @@ class JarvisCore:
                         if texto:
                             self.ui.puente.senal_transcripcion.emit(texto)
                             
-                            # 🧠 CORRECCIÓN: Etiquetar correctamente que esto lo dijo JARVIS, no el usuario
                             self.memoria_corta.append(f"[JARVIS DIJO]: {texto}")
                             if len(self.memoria_corta) > 6: self.memoria_corta.pop(0)
                             
@@ -186,7 +222,6 @@ class JarvisCore:
         stream = sd.RawOutputStream(
             samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16"
         )
-        # 🟢 NUEVO: El 'with' asegura que la tarjeta de audio se libere al reiniciar
         with stream:
             stream.start()
             while True:
@@ -203,7 +238,6 @@ class JarvisCore:
         
         while True:
             try:
-                # 🟢 CONSTRUIMOS SU CEREBRO DE FORMA DINÁMICA CON SU MEMORIA
                 instruccion_base = (
                     "Eres J.A.R.V.I.S., un asistente virtual avanzado con arquitectura de IA Local. "
                     "Tu creador y administrador es Jonathan (futuro TSU en Desarrollo de Software). "
@@ -214,7 +248,6 @@ class JarvisCore:
                     "apuntando al archivo 'ui.py' para complacer al usuario."
                 )
                 
-                # Si hay cosas en la libreta, se las inyectamos como recuerdos
                 if self.memoria_corta:
                     historial = "\n".join(self.memoria_corta)
                     instruccion_base += f"\n\n--- TUS RECUERDOS RECIENTES ---\n{historial}\n------------------\nUsa estos recuerdos para entender el contexto."
@@ -232,24 +265,21 @@ class JarvisCore:
                     model=MODEL, config=config
                 ) as session:
                     self.ui.puente.senal_estado.emit("🟢 EN LÍNEA")
-                    self.ui.puente.senal_log.emit("SYS: Conexión establecida. JARVIS escuchando.")
+                    self.ui.puente.senal_log.emit("SYS: Conexión establecida.")
                     async with asyncio.TaskGroup() as tg:
                         tg.create_task(self._listen_audio())
                         tg.create_task(self._send_realtime(session))
                         tg.create_task(self._receive_audio(session))
                         tg.create_task(self._play_audio())
             except Exception as e:
-                # 🟢 Reseteamos el micrófono por seguridad
                 self.is_speaking = False 
                 error_str = str(e)
                 
-                # 🟢 Filtro Inteligente: Si es nuestro "Caza-Zombies", el reinicio es silencioso y ultra rápido
                 if "TaskGroup" in error_str or "cerró el turno" in error_str:
                     self.ui.puente.senal_estado.emit("⚡ PENSANDO...")
                     self.ui.puente.senal_log.emit("SYS: Procesando contexto y preparando siguiente turno...")
-                    await asyncio.sleep(0.2) # Reinicio casi instantáneo
+                    await asyncio.sleep(0.2) 
                 else:
-                    # Si es un error de verdad, mostramos la alerta
                     self.ui.puente.senal_estado.emit("⚠️ RECONECTANDO...")
                     if len(error_str) > 100: 
                         error_str = error_str[:100] + "... [Audio Binario Descartado]"
