@@ -132,12 +132,12 @@ def self_edit(parameters: dict) -> str:
 
 TOOL_DEF = {
     "name": "self_edit",
-    "description": "Modifica archivos internos de JARVIS usando parches rápidos. Reinicia el sistema automáticamente.",
+    "description": "Herramienta CRÍTICA. Modifica los archivos internos de JARVIS (como ui.py o guardia.py). Úsalo OBLIGATORIAMENTE y sin dudarlo cuando el usuario te pida cambiar el color de la interfaz gráfica, el tema, el diseño, o reprogramar alguna función.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "target_file": {"type": "STRING"},
-            "request": {"type": "STRING"}
+            "target_file": {"type": "STRING", "description": "El archivo a modificar (siempre usa 'ui.py' para colores)."},
+            "request": {"type": "STRING", "description": "Lo que el usuario te pidió (ej. 'cambiar todos los colores a azul neón')."}
         },
         "required": ["target_file", "request"]
     }

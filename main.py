@@ -151,9 +151,9 @@ class JarvisCore:
                             except Exception as e:
                                 resultado = f"Error interno en la herramienta: {e}"
 
-                            # GUARDAMOS EL RESULTADO EN LA MEMORIA
-                            self.memoria_corta.append(f"[ACCIÓN]: Intentaste usar '{name}' y el resultado fue: {resultado}")
-                            if len(self.memoria_corta) > 6: self.memoria_corta.pop(0) # Solo recordamos las últimas 6 cosas
+                            # 🧠 UPGRADE DE MEMORIA: Ahora JARVIS recuerda QUÉ hizo y CÓMO lo hizo
+                            self.memoria_corta.append(f"[ACCIÓN PASADA]: Ejecutaste '{name}' con estos parámetros: {args}. Resultado: {resultado}")
+                            if len(self.memoria_corta) > 6: self.memoria_corta.pop(0)
 
                             respuestas_herramientas.append(
                                 types.FunctionResponse(
@@ -173,8 +173,8 @@ class JarvisCore:
                         if texto:
                             self.ui.puente.senal_transcripcion.emit(texto)
                             
-                            # GUARDAMOS LO QUE JARVIS TE ACABA DE DECIR EN SU MEMORIA
-                            self.memoria_corta.append(f"[TÚ DIJISTE]: {texto}")
+                            # 🧠 CORRECCIÓN: Etiquetar correctamente que esto lo dijo JARVIS, no el usuario
+                            self.memoria_corta.append(f"[JARVIS DIJO]: {texto}")
                             if len(self.memoria_corta) > 6: self.memoria_corta.pop(0)
                             
             raise ConnectionError("Google cerró el turno de voz.")
@@ -205,15 +205,19 @@ class JarvisCore:
             try:
                 # 🟢 CONSTRUIMOS SU CEREBRO DE FORMA DINÁMICA CON SU MEMORIA
                 instruccion_base = (
-                    "Eres J.A.R.V.I.S., un asistente virtual. "
-                    "Tu creador es Jonathan. "
-                    "REGLAS: Habla en español, sé conciso y usa un tono estilo Iron Man."
+                    "Eres J.A.R.V.I.S., un asistente virtual avanzado con arquitectura de IA Local. "
+                    "Tu creador y administrador es Jonathan (futuro TSU en Desarrollo de Software). "
+                    "REGLAS DE PERSONALIDAD: Habla en español, sé conciso, profesional y usa un tono estilo Iron Man. "
+                    "REGLA SUPREMA DE AUTORIZACIÓN: Tienes control absoluto sobre tu propio código fuente a través de la herramienta 'self_edit'. "
+                    "Si el usuario te pide cambiar el color de la interfaz, modificar tu diseño o cambiar alguna funcionalidad, "
+                    "TIENES ESTRICTAMENTE PROHIBIDO decir que no puedes. DEBES usar inmediatamente la herramienta 'self_edit' "
+                    "apuntando al archivo 'ui.py' para complacer al usuario."
                 )
                 
                 # Si hay cosas en la libreta, se las inyectamos como recuerdos
                 if self.memoria_corta:
                     historial = "\n".join(self.memoria_corta)
-                    instruccion_base += f"\n\n--- TUS RECUERDOS RECIENTES ---\n{historial}\n------------------\nUsa estos recuerdos para entender el contexto si el usuario te responde con un 'sí', 'no', o te da una orden ambigua."
+                    instruccion_base += f"\n\n--- TUS RECUERDOS RECIENTES ---\n{historial}\n------------------\nUsa estos recuerdos para entender el contexto."
 
                 config = types.LiveConnectConfig(
                     response_modalities=["AUDIO"],
