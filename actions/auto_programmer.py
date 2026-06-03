@@ -42,7 +42,7 @@ def auto_programmer(parameters: dict) -> str:
         # 🟢 CONEXIÓN DIRECTA A TU OLLAMA LOCAL
         url = "http://localhost:11434/api/generate"
         payload = {
-            "model": "qwen3.6:latest", # El modelo exacto que tienes en tu terminal
+            "model": "qwen2.5-coder:7b", # El modelo exacto que tienes en tu terminal
             "prompt": prompt,
             "stream": False
         }

@@ -1,0 +1,8 @@
+{
+    "hechos": [
+        "Al usuario le gusta la interfaz de color verde.",
+        "El usuario prefiere la interfaz en color verde.",
+        "Al usuario le gusta la interfaz en color blanco.",
+        "Regla de interfaz: Al cambiar colores, actualizar bloque completo desde S_PRI - Neón, exceptuando C_BG y C_PANEL (Negro)."
+    ]
+}

@@ -5,10 +5,9 @@ import traceback
 import json
 import time
 import threading
-import re
 
 def ejecutar_reinicio(archivo_modificado):
-    time.sleep(12)
+    time.sleep(5)
     print(f"\n🔄 [SISTEMA] Aplicando cambios de '{archivo_modificado}'. Reiniciando núcleo...")
     os.execl(sys.executable, sys.executable, *sys.argv)
 
@@ -31,43 +30,59 @@ def self_edit(parameters: dict) -> str:
 
     try:
         with open(ruta_encontrada, "r", encoding="utf-8") as f:
-            codigo_original = f.read()
+            codigo_original = f.read().replace("\r\n", "\n")
+
+        # 🧠 CONEXIÓN AL HIPOCAMPO
+        memoria_texto = ""
+        ruta_memoria = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "long_term_memory.json")
+        if os.path.exists(ruta_memoria):
+            try:
+                with open(ruta_memoria, "r", encoding="utf-8") as f:
+                    memoria = json.load(f)
+                    if "hechos" in memoria and memoria["hechos"]:
+                        memoria_texto = "REGLAS APRENDIDAS DEL USUARIO (DEBES OBEDECERLAS ESTRICTAMENTE):\n- " + "\n- ".join(memoria["hechos"])
+            except Exception as e:
+                print(f"[DEBUG] Error leyendo memoria: {e}")
 
         prompt = f'''
         Eres JARVIS, un Arquitecto de Software Senior. El usuario solicitó este cambio en '{ruta_encontrada}':
         "{request}"
         
-        Aquí está el código actual:
+        {memoria_texto}
+        
+        INSTRUCCIONES CRÍTICAS:
+        1. NO reescribas todo el archivo.
+        2. 🚫 ¡PROHIBIDO RENOMBRAR VARIABLES! Solo cambia sus valores internos.
+        3. 🛡️ ¡EL FONDO ES SAGRADO!: NUNCA modifiques las variables `C_BG` ni `C_PANEL`. El fondo siempre debe ser negro o translúcido oscuro. Solo tienes permitido cambiar los colores de los acentos brillantes (ej. `C_PRI`, `C_PRI_DIM`, `C_BORDER`, `C_TEXT`, `GREEN_NEON`).
+        4. El bloque [BUSCAR] debe ser un fragmento CONTINUO exacto. No te saltes líneas intermedias.
+        
+        [BUSCAR]
+        codigo viejo exactamente como esta en el archivo, sin omitir lineas
+        [REEMPLAZAR]
+        codigo nuevo que quieres poner, MANTENIENDO los mismos nombres de variables y respetando el fondo oscuro.
+        [FIN]
+        
+        Código actual de referencia:
         ```python
         {codigo_original}
         ```
         
-        INSTRUCCIONES CRÍTICAS (OPTIMIZACIÓN DE MEMORIA):
-        1. ¡NO reescribas todo el archivo! Es una pérdida de tiempo y recursos.
-        2. Encuentra la parte que debe cambiar y devuelve ÚNICAMENTE el bloque de reemplazo.
-        3. El texto que pongas en "SEARCH" debe ser EXACTAMENTE idéntico al código original (respeta los espacios y saltos de línea).
-        
-        UTILIZA ESTRICTAMENTE ESTE FORMATO:
-        <<<< SEARCH
-        codigo viejo que quieres quitar
-        ====
-        codigo nuevo que quieres poner
-        >>>> REPLACE
-        
-        Cero explicaciones, cero saludos. Ve directo al código.
+        Responde ÚNICAMENTE con el formato indicado. Cero saludos.
         '''
 
         url = "http://localhost:11434/api/generate"
         payload = {
-            "model": "qwen2.5-coder:7b", # ⚡ Volvemos al modelo inteligente, ya no colapsará
+            "model": "qwen2.5-coder:7b", 
             "prompt": prompt,
             "stream": True,
             "options": {
-                "num_ctx": 16000,
-                "temperature": 0.1 # Temperatura baja para que sea un robot preciso
+                "num_ctx": 8192,
+                "num_predict": 400, 
+                "temperature": 0.0
             }
         }
         
+        print(f"[DEBUG] Generando parche considerando el Hipocampo y el Escudo de Diseño...")
         response = requests.post(url, json=payload, stream=True)
         response.raise_for_status()
         
@@ -77,66 +92,52 @@ def self_edit(parameters: dict) -> str:
                 datos = json.loads(linea)
                 fragmento = datos.get("response", "")
                 texto_completo += fragmento
-                print(fragmento, end="", flush=True) 
                 
-                # 🛑 EL ASESINO DE BUCLES ACTUALIZADO
-                if ">>>> REPLACE" in texto_completo and len(texto_completo.split(">>>> REPLACE")[-1]) > 50:
-                    print("\n\n[DEBUG] 🛑 Fin de la edición detectado. Cortando...")
+                if "[FIN]" in texto_completo:
                     response.close()
                     break
-                
-        print("\n[DEBUG] Aplicando parches quirúrgicos al código...")
-
-        # 🟢 EL BUSCADOR Y REEMPLAZADOR INTELIGENTE (REGEX)
-        bloques = re.findall(r'<<<< SEARCH\n(.*?)\n====\n(.*?)\n>>>> REPLACE', texto_completo, re.DOTALL)
-        
-        if bloques:
-            codigo_nuevo = codigo_original
-            cambios_exitosos = 0
-            for original, nuevo in bloques:
-                # Comprueba si el fragmento exacto existe en el archivo
-                if original in codigo_nuevo:
-                    codigo_nuevo = codigo_nuevo.replace(original, nuevo)
-                    cambios_exitosos += 1
-                else:
-                    print("\n❌ [DEBUG] Advertencia: No se encontró la coincidencia exacta de SEARCH.")
                     
-            if cambios_exitosos == 0:
-                return "Error: La IA propuso cambios, pero el texto a reemplazar no coincidía exactamente con el archivo original."
-        else:
-            # 🛡️ PLAN B: Por si la IA ignora las reglas y decide reescribir todo
-            if "```python" in texto_completo:
-                codigo_nuevo = texto_completo.split("```python")[1].split("```")[0].strip()
-            elif "```" in texto_completo:
-                codigo_nuevo = texto_completo.split("```")[1].split("```")[0].strip()
-            else:
-                return "Error: La IA no usó el formato de parche ni escribió código estándar."
+        print(f"\n[DEBUG] --- TEXTO CRUDO GENERADO POR LA IA ---")
+        print(texto_completo.strip())
+        print("----------------------------------------------\n")
 
-        with open(ruta_encontrada, "w", encoding="utf-8") as f:
-            f.write(codigo_nuevo)
-            
-        threading.Thread(target=ejecutar_reinicio, args=(nombre_archivo,), daemon=True).start()
-
-        if "ui.py" in nombre_archivo.lower():
-            return "Interfaz gráfica modificada quirúrgicamente. Reiniciando ventana..."
+        if "[BUSCAR]" in texto_completo and "[REEMPLAZAR]" in texto_completo:
+            try:
+                buscar = texto_completo.split("[BUSCAR]")[1].split("[REEMPLAZAR]")[0].strip("\n")
+                reemplazar = texto_completo.split("[REEMPLAZAR]")[1].split("[FIN]")[0].strip("\n")
+                
+                buscar = buscar.replace("```python", "").replace("```", "").strip("\n")
+                reemplazar = reemplazar.replace("```python", "").replace("```", "").strip("\n")
+                
+                if buscar in codigo_original:
+                    codigo_nuevo = codigo_original.replace(buscar, reemplazar)
+                    
+                    with open(ruta_encontrada, "w", encoding="utf-8") as f:
+                        f.write(codigo_nuevo)
+                        
+                    threading.Thread(target=ejecutar_reinicio, args=(nombre_archivo,), daemon=True).start()
+                    return f"Archivo {nombre_archivo} modificado quirúrgicamente. Reiniciando núcleo..."
+                else:
+                    return "Error: La IA generó el bloque, pero el texto a BUSCAR no coincide. Revisa la consola."
+            except Exception as e:
+                return f"Error aplicando el parche: {e}"
         else:
-            return f"Archivo '{nombre_archivo}' parcheado con éxito. Reiniciando núcleo..."
+            return "Error: La IA no usó el formato estricto de BUSCAR y REEMPLAZAR."
 
     except requests.exceptions.ConnectionError:
         return "Error: Ollama no está encendido."
     except Exception as e:
         traceback.print_exc()
-        return f"Error crítico durante la modificación: {e}"
+        return f"Error crítico: {e}"
 
-# 🟢 EL MANUAL AUTODESCUBRIBLE
 TOOL_DEF = {
     "name": "self_edit",
-    "description": "Modifica archivos internos de JARVIS (como ui.py o guardia.py) usando parches de código rápidos. Reinicia el sistema automáticamente al terminar.",
+    "description": "Modifica archivos internos de JARVIS usando parches rápidos. Reinicia el sistema automáticamente.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "target_file": {"type": "STRING", "description": "Nombre del archivo a modificar."},
-            "request": {"type": "STRING", "description": "Cambio solicitado."}
+            "target_file": {"type": "STRING"},
+            "request": {"type": "STRING"}
         },
         "required": ["target_file", "request"]
     }
