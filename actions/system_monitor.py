@@ -1,45 +1,32 @@
 import psutil
 
-
 def system_monitor(parameters: dict) -> str:
-    # parameters no se usa mucho aquí porque la acción siempre es leer el sistema,
-    # pero lo recibimos para mantener la misma estructura que las demás herramientas.
-
     try:
-        # psutil.cpu_percent necesita un pequeño intervalo para calcular el uso real
-        cpu_usage = psutil.cpu_percent(interval=0.5)
-
-        # Leemos la memoria RAM y la convertimos de bytes a Gigabytes
+        # Leemos los sensores en tiempo real
+        cpu = psutil.cpu_percent(interval=0.5)
         ram = psutil.virtual_memory()
-        ram_percent = ram.percent
-        ram_free_gb = round(ram.available / (1024**3), 2)
-        ram_total_gb = round(ram.total / (1024**3), 2)
-
-        # Leemos el disco local C:
-        disk = psutil.disk_usage("C:\\")
-        disk_percent = disk.percent
-        disk_free_gb = round(disk.free / (1024**3), 2)
-
-        # Construimos el reporte para que la IA lo lea y te lo resuma
-        report = (
-            f"DATOS DE SENSORES DEL SISTEMA:\n"
-            f"- Uso de CPU: {cpu_usage}%\n"
-            f"- Memoria RAM: Usando el {ram_percent}% ({ram_free_gb} GB libres de {ram_total_gb} GB totales)\n"
-            f"- Almacenamiento Disco C: Usando el {disk_percent}% ({disk_free_gb} GB libres)"
-        )
-
-        return f"Lectura exitosa. Dale este reporte al usuario de forma natural y fluida: {report}"
-
+        bateria = psutil.sensors_battery()
+        
+        reporte = f"🖥️ Reporte del Hardware:\n- Uso de CPU: {cpu}%\n- Memoria RAM: {ram.percent}% usada ({ram.available / (1024**3):.1f} GB libres)\n"
+        
+        # Si tienes laptop, leemos la batería
+        if bateria:
+            enchufado = "conectada a la corriente" if bateria.power_plugged else "usando batería"
+            reporte += f"- Batería: {bateria.percent}% ({enchufado})\n"
+            
+        return reporte
     except Exception as e:
-        return f"Error crítico al intentar acceder a los sensores del sistema: {e}"
+        return f"Error leyendo los sensores del sistema: {e}"
 
-
+# 🟢 EL MANUAL AUTODESCUBRIBLE
 TOOL_DEF = {
     "name": "system_monitor",
-    "description": "Lee los sensores físicos de la computadora (CPU, RAM, Disco).",
+    "description": "Revisa el estado del hardware de la computadora (Uso de CPU, RAM, y Batería). Úsalo cuando el usuario pregunte por el rendimiento, la memoria disponible o cuánta batería le queda.",
     "parameters": {
         "type": "OBJECT",
-        "properties": {"action": {"type": "STRING", "description": "check_system"}},
-        "required": ["action"],
-    },
+        "properties": {
+            "action": {"type": "STRING", "description": "estado"}
+        },
+        "required": ["action"]
+    }
 }

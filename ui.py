@@ -1,4 +1,4 @@
-"""ui.py — 100% Custom Gold-Themed Dynamic Bento PyQt6 User Interface for JARVIS."""
+"""ui.py — 100% Custom Green Neon Themed Dynamic Bento PyQt6 User Interface for JARVIS."""
 from __future__ import annotations
 import sys
 import os
@@ -32,15 +32,14 @@ except ImportError:
 # Zona Horaria (Ajustable a tu región)
 _BA_TZ = timezone(timedelta(hours=-6)) # Ajustado a México (GMT-6)
 
-# Theme Tokens (Gold)
-C_PRI = "#f59e0b"
-C_PRI_DIM = "#78350f"
-C_BG = "#0c0804"
-C_PANEL = "rgba(35, 28, 10, 0.60)" # Cajas Bento translúcidas
-C_BORDER = "rgba(245, 158, 11, 0.45)"
-C_TEXT = "#fde68a"
-RED = "#ff3b30"
-
+# Theme Tokens (Green Neon)
+C_PRI = "#00ff80"
+C_PRI_DIM = "#00b347"
+C_BG = "#000000"  # Cambiado a negro
+C_PANEL = "rgba(255, 255, 255, 0.60)"  # Cajas Bento translúcidas con fondo blanco
+C_BORDER = "rgba(255, 255, 255, 0.45)"
+C_TEXT = "#000000"
+GREEN_NEON = "#00ff80"
 
 class WebBridge(QObject):
     def __init__(self, orb):
@@ -149,7 +148,7 @@ class ClockWidget(QWidget):
 
     def update_style(self):
         self.setStyleSheet("QWidget#ClockWidget { background: transparent; border: none; }")
-        self.lbl_time.setStyleSheet("color: white; border: none; background: transparent;")
+        self.lbl_time.setStyleSheet("color: black; border: none; background: transparent;")
         self.lbl_date.setStyleSheet(f"font-size: 13px; letter-spacing: 1px; color: {C_PRI}; border: none; font-weight: bold; background: transparent;")
 
 
@@ -179,9 +178,9 @@ class WeatherWidget(QWidget):
         
     def update_style(self):
         self.setStyleSheet(f"QWidget#WeatherWidget {{ background: {C_PANEL}; border: 1.5px solid {C_BORDER}; border-radius: 12px; }}")
-        self.lbl_title.setStyleSheet(f"font-weight: bold; font-size: 11px; letter-spacing: 2px; color: {C_PRI}; background: transparent; border: none;")
-        self.lbl_temp.setStyleSheet("font-size: 26px; font-weight: bold; color: white; background: transparent; border: none; margin-right: 10px;")
-        self.lbl_desc.setStyleSheet(f"font-size: 12px; color: {C_TEXT}; background: transparent; border: none;")
+        self.lbl_title.setStyleSheet(f"font-weight: bold; font-size: 11px; letter-spacing: 2px; color: {C_PRI}; background: transparent; border:none;")
+        self.lbl_temp.setStyleSheet("font-size: 26px; font-weight: bold; color: black; background: transparent; border:none; margin-right: 10px;")
+        self.lbl_desc.setStyleSheet(f"font-size: 12px; color: {C_TEXT}; background: transparent; border:none;")
 
 
 class SpotifyWidget(QWidget):
@@ -229,10 +228,10 @@ class SpotifyWidget(QWidget):
     def update_style(self):
         self.setStyleSheet(f"QWidget#SpotifyWidget {{ background: {C_PANEL}; border: 1.5px solid {C_BORDER}; border-radius: 12px; }}")
         self.lbl_title.setStyleSheet(f"font-weight: bold; font-size: 11px; letter-spacing: 2px; color: {C_PRI}; background: transparent; border:none;")
-        self.lbl_track.setStyleSheet("font-size: 16px; font-weight: bold; color: white; background: transparent; border:none; margin-top: 5px;")
+        self.lbl_track.setStyleSheet("font-size: 16px; font-weight: bold; color: black; background: transparent; border:none; margin-top: 5px;")
         self.lbl_artist.setStyleSheet(f"font-size: 12px; color: {C_PRI_DIM}; background: transparent; border:none; margin-bottom: 5px;")
         
-        btn_style = f"QPushButton {{ background: rgba(245,158,11,0.1); border: 1px solid {C_BORDER}; border-radius: 17px; color: white; font-size: 16px; }} QPushButton:hover {{ background: rgba(245,158,11,0.3); border-color: {C_PRI}; }}"
+        btn_style = f"QPushButton {{ background: rgba(0,0,0,0.1); border: 1px solid {C_BORDER}; border-radius: 17px; color: white; font-size: 16px; }} QPushButton:hover {{ background: rgba(0,0,0,0.3); border-color: {C_PRI}; }}"
         self.btn_play.setStyleSheet(btn_style)
         self.btn_next.setStyleSheet(btn_style)
         self.btn_prev.setStyleSheet(btn_style)
@@ -281,7 +280,7 @@ class SystemWidget(QWidget):
         self.lbl_cpu.setStyleSheet(lbl_style)
         self.lbl_ram.setStyleSheet(lbl_style)
         
-        bar_style = f"QProgressBar {{ border: 1px solid {C_BORDER}; border-radius: 6px; text-align: center; color: white; height: 16px; background: rgba(0,0,0,0.4); }} QProgressBar::chunk {{ background-color: {C_PRI}; border-radius: 5px; }}"
+        bar_style = f"QProgressBar {{ border: 1px solid {C_BORDER}; border-radius: 6px; text-align: center; color: black; height: 16px; background: rgba(0,0,0,0.4); }} QProgressBar::chunk {{ background-color: {C_PRI}; border-radius: 5px; }}"
         self.cpu_bar.setStyleSheet(bar_style)
         self.ram_bar.setStyleSheet(bar_style)
 
@@ -324,9 +323,9 @@ class TodoWidget(QWidget):
     def update_style(self):
         self.setStyleSheet(f"QWidget#TodoWidget {{ background: {C_PANEL}; border: 1.5px solid {C_BORDER}; border-radius: 12px; }}")
         self.lbl_title.setStyleSheet(f"font-weight: bold; font-size: 11px; letter-spacing: 2px; color: {C_PRI}; border: none; background: transparent;")
-        self.txt_task.setStyleSheet(f"QLineEdit {{ background: rgba(0,0,0,0.5); border: 1px solid {C_BORDER}; border-radius: 6px; padding: 6px; color: white; }}")
+        self.txt_task.setStyleSheet(f"QLineEdit {{ background: rgba(0,0,0,0.5); border: 1px solid {C_BORDER}; border-radius: 6px; padding: 6px; color: black; }}")
         self.btn_add.setStyleSheet(f"QPushButton {{ background: {C_PRI}; color: black; font-weight: bold; border-radius: 6px; font-size: 18px; }}")
-        self.lst_todo.setStyleSheet("QListWidget { border: none; background: transparent; } QListWidget::item { color: white; margin-top: 5px; }")
+        self.lst_todo.setStyleSheet("QListWidget { border: none; background: transparent; } QListWidget::item { color: black; margin-top: 5px; }")
 
 
 class NotesWidget(QWidget):
@@ -347,7 +346,7 @@ class NotesWidget(QWidget):
     def update_style(self):
         self.setStyleSheet(f"QWidget#NotesWidget {{ background: {C_PANEL}; border: 1.5px solid {C_BORDER}; border-radius: 12px; }}")
         self.lbl_title.setStyleSheet(f"font-weight: bold; font-size: 11px; letter-spacing: 2px; color: {C_PRI}; border: none; background: transparent;")
-        self.txt_notes.setStyleSheet(f"QTextEdit {{ border: none; background: rgba(0,0,0,0.4); border-radius: 6px; padding: 8px; color: white; font-size: 13px; }}")
+        self.txt_notes.setStyleSheet(f"QTextEdit {{ border: none; background: rgba(0,0,0,0.4); border-radius: 6px; padding: 8px; color: black; font-size: 13px; }}")
 
 
 class FilesPanel(QWidget):
@@ -443,15 +442,15 @@ class MainWindow(QMainWindow):
         self._drag_pos = None
 
     def update_theme_styles(self):
-        self.central_widget.setStyleSheet(f"QWidget#centralWidget {{ background-color: #080502; background: radial-gradient(circle at center, #1f1406 0%, #080502 80%); border: 2.2px solid {C_PRI}; border-radius: 20px; }}")
-        self.lbl_brand.setStyleSheet(f"color: {C_PRI}; background: transparent; border: none;")
+        self.central_widget.setStyleSheet(f"QWidget#centralWidget {{ background-color: {C_BG}; border: 2.2px solid {C_PRI}; border-radius: 20px; }}")
+        self.lbl_brand.setStyleSheet(f"color: black; background: transparent; border: none;")
         
-        btn_style = f"QPushButton {{ color: {C_PRI}; background: rgba(245,158,11,0.1); border: 1px solid {C_BORDER}; border-radius: 15px; font-size: 16px; font-weight: bold; }} QPushButton:hover {{ background: {RED}; color: white; border-color: {RED}; }}"
+        btn_style = f"QPushButton {{ color: black; background: rgba(0,0,0,0.1); border: 1px solid {C_BORDER}; border-radius: 15px; font-size: 16px; font-weight: bold; }} QPushButton:hover {{ background: {GREEN_NEON}; color: white; border-color: {GREEN_NEON}; }}"
         self.btn_close.setStyleSheet(btn_style)
         self.btn_settings.setStyleSheet(btn_style)
         self.btn_camera.setStyleSheet(btn_style)
         
-        self.txt_console.setStyleSheet(f"QLabel {{ color: {C_PRI}; font-weight: bold; font-size: 16px; background: transparent; }}")
+        self.txt_console.setStyleSheet(f"QLabel {{ color: black; font-weight: bold; font-size: 16px; background: transparent; }}")
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

@@ -1,64 +1,50 @@
-import mss
-from PIL import Image
-from google import genai
 import os
+from PIL import ImageGrab
+from google import genai
 from dotenv import load_dotenv
 
-# REEMPLAZA CON TU API KEY
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 
-
 def screen_vision(parameters: dict) -> str:
-    # Extraemos qué es lo que quieres saber sobre la pantalla
-    question = parameters.get("question", "Describe brevemente qué hay en la pantalla.")
-    action = parameters.get("action", "describe")
-
-    prompt = f"El usuario te pregunta sobre su pantalla actual: '{question}'. Responde directo al grano, en español, y mantén tu actitud de JARVIS."
-
+    question = parameters.get("question", "¿Qué hay en mi pantalla?")
+    ruta_img = "temp_vision.png"
+    
     try:
-        # 1. Capturar la pantalla a velocidad extrema
-        with mss.mss() as sct:
-            # Seleccionamos el monitor principal
-            monitor = sct.monitors[1]
-            sct_img = sct.grab(monitor)
-
-            # Convertimos la captura en una imagen para la IA
-            img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-
-            # Reducimos la resolución a 720p para que suba a la nube en milisegundos
-            img.thumbnail((1280, 720))
-
-        # 2. Consultar al motor de visión de Gemini
+        # 1. Toma una captura instantánea de todos tus monitores
+        img = ImageGrab.grab(all_screens=True)
+        img.save(ruta_img)
+        
+        # 2. Carga el archivo para la IA
         client = genai.Client(api_key=API_KEY)
-
-        # Usamos el modelo rápido de 2.5
+        import PIL.Image
+        image_ref = PIL.Image.open(ruta_img)
+        
+        prompt_maestro = f"Eres JARVIS. Estás viendo la pantalla en vivo de la computadora del usuario. Responde a su pregunta basándote ÚNICAMENTE en la imagen. Pregunta: {question}. Sé conciso y directo."
+        
+        # 3. Le pedimos al modelo visual que analice tu pantalla
         response = client.models.generate_content(
-            model="gemini-2.5-flash", contents=[prompt, img]
+            model='gemini-2.5-flash',
+            contents=[image_ref, prompt_maestro]
         )
-
-        # Le pasamos el texto analizado de vuelta a la voz de JARVIS
-        return f"Análisis visual exitoso. Respóndele esto al usuario usando la información: {response.text}"
-
+        
+        # Opcional: borra la captura para no ocupar espacio
+        if os.path.exists(ruta_img): os.remove(ruta_img)
+            
+        return f"Análisis de pantalla completado: {response.text}"
+        
     except Exception as e:
-        return f"Error en el módulo óptico: {e}"
+        return f"Error en el módulo de visión: {e}"
 
-
+# 🟢 EL MANUAL AUTODESCUBRIBLE
 TOOL_DEF = {
     "name": "screen_vision",
-    "description": "JARVIS puede VER la pantalla del usuario.",
+    "description": "Toma una captura invisible de la pantalla actual del usuario y usa Inteligencia Artificial visual para responder preguntas sobre lo que él está viendo (lee código, encuentra errores, describe imágenes). Úsalo cuando el usuario diga 'mira mi pantalla' o 'revisa este código'.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "action": {
-                "type": "STRING",
-                "description": "describe | question | help",
-            },
-            "question": {
-                "type": "STRING",
-                "description": "Pregunta sobre la pantalla.",
-            },
+            "question": {"type": "STRING", "description": "La pregunta específica que el usuario tiene sobre lo que hay en su pantalla."}
         },
-        "required": ["action"],
-    },
+        "required": ["question"]
+    }
 }

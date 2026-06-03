@@ -1,41 +1,35 @@
 from duckduckgo_search import DDGS
 
-
 def web_search(parameters: dict) -> str:
-    query = parameters.get("query", "")
-
+    query = parameters.get("query", "").strip()
     if not query:
-        return "Error: No se proporcionó ningún término de búsqueda."
-
+        return "Error: Debes proporcionar una consulta de búsqueda."
+        
     try:
-        # Hacemos la búsqueda y pedimos solo los 3 primeros resultados para ser rápidos
-        resultados = DDGS().text(query, max_results=3)
-
+        resultados = []
+        # Buscamos en DuckDuckGo de forma silenciosa
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, max_results=3):
+                resultados.append(f"Título: {r.get('title')}\nResumen: {r.get('body')}\nEnlace: {r.get('href')}")
+                
         if not resultados:
             return f"No se encontraron resultados en internet para: {query}"
-
-        # Empaquetamos la información para el cerebro de JARVIS
-        reporte = f"Resultados de internet para '{query}':\n"
-        for i, res in enumerate(resultados):
-            reporte += f"{i+1}. {res['title']}: {res['body']}\n"
-
-        return f"Búsqueda exitosa. Usa esta información para responderle al usuario de forma natural y conversacional: {reporte}"
-
+            
+        texto_final = f"Resultados encontrados para '{query}':\n\n" + "\n---\n".join(resultados)
+        return texto_final
+        
     except Exception as e:
-        return f"Error crítico de conexión al buscar en la red: {e}"
+        return f"Error en la búsqueda web: {e}"
 
-
+# 🟢 EL MANUAL AUTODESCUBRIBLE
 TOOL_DEF = {
     "name": "web_search",
-    "description": "Realiza una búsqueda en la web y devuelve un resumen de los resultados. Úsalo cuando el usuario te pida buscar algo en internet o necesite información actualizada.",
+    "description": "Busca información actualizada en internet usando un motor de búsqueda. Devuelve un resumen de los primeros 3 resultados. Úsalo cuando el usuario haga preguntas sobre datos recientes, noticias, o información que no sepas.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "query": {
-                "type": "STRING",
-                "description": "La consulta de búsqueda que quieres realizar.",
-            }
+            "query": {"type": "STRING", "description": "Lo que se va a buscar en internet."}
         },
-        "required": ["query"],
-    },
+        "required": ["query"]
+    }
 }
