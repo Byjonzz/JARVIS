@@ -18,7 +18,7 @@ def spotify_control(parameters: dict) -> str:
         os.startfile(uri)
         
         if not pyautogui:
-            return f"Abriendo Spotify buscando '{query}'. Falta 'pyautogui' para darle Play automáticamente."
+            return f"Abriendo Spotify buscando '{query}'. Falta {pyautogui} para darle Play automáticamente."
 
         # Esperamos a que Spotify cargue la búsqueda
         time.sleep(3)

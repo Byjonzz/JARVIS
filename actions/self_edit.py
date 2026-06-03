@@ -5,11 +5,14 @@ import traceback
 import json
 import time
 import threading
+import subprocess
+import re
 
 def ejecutar_reinicio(archivo_modificado):
-    time.sleep(5)
+    time.sleep(6)
     print(f"\n🔄 [SISTEMA] Aplicando cambios de '{archivo_modificado}'. Reiniciando núcleo...")
-    os.execl(sys.executable, sys.executable, *sys.argv)
+    subprocess.Popen([sys.executable] + sys.argv)
+    os._exit(0)
 
 def self_edit(parameters: dict) -> str:
     target_file = parameters.get("target_file", "").strip()
@@ -32,7 +35,6 @@ def self_edit(parameters: dict) -> str:
         with open(ruta_encontrada, "r", encoding="utf-8") as f:
             codigo_original = f.read().replace("\r\n", "\n")
 
-        # 🧠 CONEXIÓN AL HIPOCAMPO
         memoria_texto = ""
         ruta_memoria = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "long_term_memory.json")
         if os.path.exists(ruta_memoria):
@@ -44,30 +46,31 @@ def self_edit(parameters: dict) -> str:
             except Exception as e:
                 print(f"[DEBUG] Error leyendo memoria: {e}")
 
+        # 🟢 INVERSIÓN DE PROMPT: Primero el código, al final las reglas.
         prompt = f'''
-        Eres JARVIS, un Arquitecto de Software Senior. El usuario solicitó este cambio en '{ruta_encontrada}':
-        "{request}"
+        Eres JARVIS, un Arquitecto de Software Senior.
         
-        {memoria_texto}
-        
-        INSTRUCCIONES CRÍTICAS:
-        1. NO reescribas todo el archivo.
-        2. 🚫 ¡PROHIBIDO RENOMBRAR VARIABLES! Solo cambia sus valores internos.
-        3. 🛡️ ¡EL FONDO ES SAGRADO!: NUNCA modifiques las variables `C_BG` ni `C_PANEL`. El fondo siempre debe ser negro o translúcido oscuro. Solo tienes permitido cambiar los colores de los acentos brillantes (ej. `C_PRI`, `C_PRI_DIM`, `C_BORDER`, `C_TEXT`, `GREEN_NEON`).
-        4. El bloque [BUSCAR] debe ser un fragmento CONTINUO exacto. No te saltes líneas intermedias.
-        
-        [BUSCAR]
-        codigo viejo exactamente como esta en el archivo, sin omitir lineas
-        [REEMPLAZAR]
-        codigo nuevo que quieres poner, MANTENIENDO los mismos nombres de variables y respetando el fondo oscuro.
-        [FIN]
-        
-        Código actual de referencia:
+        Aquí está el código actual de referencia del archivo '{ruta_encontrada}':
         ```python
         {codigo_original}
         ```
         
-        Responde ÚNICAMENTE con el formato indicado. Cero saludos.
+        El usuario ha solicitado este cambio: "{request}"
+        
+        {memoria_texto}
+        
+        INSTRUCCIONES CRÍTICAS FINALES:
+        1. 🚫 ¡PROHIBIDO INVENTAR NOMBRES DE VARIABLES! Usa exactamente las que están en el código de arriba (ej. C_PRI, C_PRI_DIM, NEON).
+        2. 🛡️ ¡EL FONDO ES SAGRADO!: NUNCA modifiques las variables `C_BG` ni `C_PANEL`.
+        
+        RESPONDE ESTRICTAMENTE USANDO ESTE FORMATO:
+        [BUSCAR]
+        (codigo viejo exacto)
+        [REEMPLAZAR]
+        (codigo nuevo manteniendo nombres de variables)
+        [FIN]
+        
+        Empieza ahora, sin saludos.
         '''
 
         url = "http://localhost:11434/api/generate"
@@ -82,7 +85,7 @@ def self_edit(parameters: dict) -> str:
             }
         }
         
-        print(f"[DEBUG] Generando parche considerando el Hipocampo y el Escudo de Diseño...")
+        print(f"[DEBUG] Generando parche...")
         response = requests.post(url, json=payload, stream=True)
         response.raise_for_status()
         
@@ -101,28 +104,58 @@ def self_edit(parameters: dict) -> str:
         print(texto_completo.strip())
         print("----------------------------------------------\n")
 
+        codigo_nuevo = codigo_original
+        cambios_aplicados = 0
+
+        # 🟢 PLAN A: Formato Correcto
         if "[BUSCAR]" in texto_completo and "[REEMPLAZAR]" in texto_completo:
-            try:
-                buscar = texto_completo.split("[BUSCAR]")[1].split("[REEMPLAZAR]")[0].strip("\n")
-                reemplazar = texto_completo.split("[REEMPLAZAR]")[1].split("[FIN]")[0].strip("\n")
-                
-                buscar = buscar.replace("```python", "").replace("```", "").strip("\n")
-                reemplazar = reemplazar.replace("```python", "").replace("```", "").strip("\n")
-                
-                if buscar in codigo_original:
-                    codigo_nuevo = codigo_original.replace(buscar, reemplazar)
-                    
-                    with open(ruta_encontrada, "w", encoding="utf-8") as f:
-                        f.write(codigo_nuevo)
-                        
-                    threading.Thread(target=ejecutar_reinicio, args=(nombre_archivo,), daemon=True).start()
-                    return f"Archivo {nombre_archivo} modificado quirúrgicamente. Reiniciando núcleo..."
-                else:
-                    return "Error: La IA generó el bloque, pero el texto a BUSCAR no coincide. Revisa la consola."
-            except Exception as e:
-                return f"Error aplicando el parche: {e}"
+            buscar = texto_completo.split("[BUSCAR]")[1].split("[REEMPLAZAR]")[0].strip("\n").replace("```python", "").replace("```", "")
+            reemplazar = texto_completo.split("[REEMPLAZAR]")[1].split("[FIN]")[0].strip("\n").replace("```python", "").replace("```", "")
+            
+            if buscar in codigo_original and buscar.strip() != "":
+                codigo_nuevo = codigo_original.replace(buscar, reemplazar)
+                cambios_aplicados += 1
+                print("[DEBUG] Reemplazo exacto exitoso.")
+            else:
+                # 🟢 PLAN B: Fallo de memoria, inyección forzada
+                print("[DEBUG] Activando Parche Inteligente (Regex) para formato [REEMPLAZAR]...")
+                reemplazar_lines = [l for l in reemplazar.split('\n') if l.strip()]
+                for linea_nueva in reemplazar_lines:
+                    if "=" in linea_nueva:
+                        var_name = linea_nueva.split("=")[0].strip()
+                        patron = r'^' + re.escape(var_name) + r'\s*=.*$'
+                        codigo_nuevo_temp, num_subs = re.subn(patron, linea_nueva, codigo_nuevo, flags=re.MULTILINE)
+                        if num_subs > 0:
+                            codigo_nuevo = codigo_nuevo_temp
+                            cambios_aplicados += 1
+                            print(f"[DEBUG] Variable '{var_name}' parcheada.")
+
+        # 🟢 PLAN C (LA NOVEDAD): La IA ignoró el formato por completo y solo escupió código
         else:
-            return "Error: La IA no usó el formato estricto de BUSCAR y REEMPLAZAR."
+            print("[DEBUG] La IA ignoró el formato. Activando Plan C (Extractor Crudo)...")
+            # Extraemos todo lo que parezca código Python
+            bloques_codigo = re.findall(r'```python\n(.*?)\n```', texto_completo, re.DOTALL)
+            texto_a_procesar = bloques_codigo[0] if bloques_codigo else texto_completo
+            
+            reemplazar_lines = [l for l in texto_a_procesar.split('\n') if l.strip()]
+            for linea_nueva in reemplazar_lines:
+                if "=" in linea_nueva and "==" not in linea_nueva: # Aseguramos que sea una asignación de variable
+                    var_name = linea_nueva.split("=")[0].strip()
+                    patron = r'^' + re.escape(var_name) + r'\s*=.*$'
+                    codigo_nuevo_temp, num_subs = re.subn(patron, linea_nueva, codigo_nuevo, flags=re.MULTILINE)
+                    if num_subs > 0:
+                        codigo_nuevo = codigo_nuevo_temp
+                        cambios_aplicados += 1
+                        print(f"[DEBUG] [Plan C] Variable '{var_name}' inyectada a la fuerza.")
+
+        # 🟢 EJECUCIÓN FINAL
+        if cambios_aplicados > 0:
+            with open(ruta_encontrada, "w", encoding="utf-8") as f:
+                f.write(codigo_nuevo)
+            threading.Thread(target=ejecutar_reinicio, args=(nombre_archivo,), daemon=True).start()
+            return f"Archivo {nombre_archivo} modificado quirúrgicamente. Reiniciando núcleo..."
+        else:
+            return "Error: La IA alucinó variables que no existen en el código original."
 
     except requests.exceptions.ConnectionError:
         return "Error: Ollama no está encendido."
@@ -132,12 +165,12 @@ def self_edit(parameters: dict) -> str:
 
 TOOL_DEF = {
     "name": "self_edit",
-    "description": "Herramienta CRÍTICA. Modifica los archivos internos de JARVIS (como ui.py o guardia.py). Úsalo OBLIGATORIAMENTE y sin dudarlo cuando el usuario te pida cambiar el color de la interfaz gráfica, el tema, el diseño, o reprogramar alguna función.",
+    "description": "Herramienta CRÍTICA. Modifica los archivos internos de JARVIS (como ui.py). Úsalo OBLIGATORIAMENTE y sin dudarlo cuando el usuario te pida cambiar el color de la interfaz gráfica o editar código.",
     "parameters": {
         "type": "OBJECT",
         "properties": {
             "target_file": {"type": "STRING", "description": "El archivo a modificar (siempre usa 'ui.py' para colores)."},
-            "request": {"type": "STRING", "description": "Lo que el usuario te pidió (ej. 'cambiar todos los colores a azul neón')."}
+            "request": {"type": "STRING", "description": "Lo que el usuario pidió (ej. 'cambiar a azul neón')."}
         },
         "required": ["target_file", "request"]
     }

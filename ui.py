@@ -33,13 +33,13 @@ except ImportError:
 _BA_TZ = timezone(timedelta(hours=-6)) # Ajustado a México (GMT-6)
 
 # Theme Tokens (Green Neon)
-C_PRI = "#00ff00"
-C_PRI_DIM = "#008000"
+C_PRI = "#00FF00"
+C_PRI_DIM = "#00CC00"
 C_BG = "#000000" 
 C_PANEL = "rgba(0, 0, 0, 0.60)" 
 C_BORDER = "rgba(0, 255, 0, 0.45)"
-C_TEXT = "#00ff00"
-NEON = "#00ff00"
+C_TEXT = "#FFFFFF"
+NEON = "#00FF00"
 
 class WebBridge(QObject):
     def __init__(self, orb):
