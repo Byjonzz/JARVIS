@@ -9,6 +9,7 @@ import os
 import collections
 import importlib
 import datetime
+from dotenv import load_dotenv
 import traceback
 import sounddevice as sd
 from vosk import Model, KaldiRecognizer, SetLogLevel
@@ -18,6 +19,7 @@ from PyQt6.QtWidgets import QApplication
 from dotenv import load_dotenv
 
 from ui import JarvisUI
+from config_manager import load_api_keys
 
 SEND_SAMPLE_RATE = 16000
 RECEIVE_SAMPLE_RATE = 24000
@@ -72,6 +74,32 @@ class IRISCore:
         self.is_speaking_ui = False
         self.has_logged_audio = False 
         self.texto_respuesta = ""
+        
+        try:
+            cfg = load_api_keys()
+            # El nombre exacto que seleccionaste en la interfaz
+            mic_seleccionado = cfg.get("mic_device_name", "") 
+            spk_seleccionado = cfg.get("speaker_device_name", "")
+            
+            # Encontramos el número (ID) de ese micrófono en Windows
+            import sounddevice as sd
+            dispositivos = sd.query_devices()
+            
+            self.mic_id = None
+            self.spk_id = None
+            
+            for i, dev in enumerate(dispositivos):
+                if mic_seleccionado in dev['name'] and dev['max_input_channels'] > 0:
+                    self.mic_id = i
+                if spk_seleccionado in dev['name'] and dev['max_output_channels'] > 0:
+                    self.spk_id = i
+                    
+            if self.mic_id is not None: log_guardia(f"⚙️ Forzando Micrófono: {mic_seleccionado} (ID: {self.mic_id})")
+            if self.spk_id is not None: log_guardia(f"⚙️ Forzando Bocina: {spk_seleccionado} (ID: {self.spk_id})")
+        except Exception as e:
+            self.mic_id = None
+            self.spk_id = None
+            log_guardia(f"⚠️ No se pudo leer configuración de audio. Usando Default. {e}")
         
         log_guardia("🧠 [INIT] Cargando modelo Vosk para STT local...")
         self.vosk_model = Model("vosk_model")
@@ -134,7 +162,7 @@ class IRISCore:
                 pass
 
         stream = sd.InputStream(
-            samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=2000, callback=callback
+            device=self.mic_id, samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=2000, callback=callback
         )
         
         with stream:
@@ -220,7 +248,9 @@ class IRISCore:
 
     async def _play_audio(self):
         loop = asyncio.get_event_loop()
-        stream = sd.RawOutputStream(samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16")
+        stream = sd.RawOutputStream(
+            device=self.spk_id, samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16"
+        )
         try:
             with stream:
                 stream.start()

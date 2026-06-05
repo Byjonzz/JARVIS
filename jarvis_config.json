@@ -1,0 +1,20 @@
+{
+    "gemini_api_key": "",
+    "openrouter_api_key": "",
+    "ai_provider": "gemini",
+    "ollama_url": "",
+    "ollama_model": "",
+    "performance_quality": 100,
+    "jarvis_voice": "Kore",
+    "jarvis_theme": "cyan",
+    "gpu_acceleration": true,
+    "mic_sensitivity": 100,
+    "camera_ip": "",
+    "user_name": "Se\u00f1or",
+    "spotify_client_id": "",
+    "spotify_client_secret": "",
+    "spotify_redirect_uri": "http://127.0.0.1:8888/callback",
+    "mic_device_name": "Line (Astro A50 Game)",
+    "speaker_device_name": "Headphones (Astro A50 Game)",
+    "camera_device_name": "USB webcam"
+}

@@ -1,9 +1,14 @@
 import os
 import threading
+from ctypes import cast, POINTER
+from comtypes import CLSCTX_ALL
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 import webbrowser
 import urllib.parse
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
+import sounddevice as sd
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
@@ -11,23 +16,14 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 
-# Importamos las Alertas que creaste en la Fase 1
 from alerts import JarvisMessageBox
 
-# Importamos tu gestor de memoria (asegúrate de que la ruta sea correcta según tu proyecto)
-try:
-    from memory.config_manager import load_api_keys, save_api_keys, BASE_DIR
-except ImportError:
-    # Fallback de seguridad
-    def load_api_keys(): return {}
-    def save_api_keys(cfg): pass
-    BASE_DIR = Path(__file__).parent
+from config_manager import load_api_keys, save_api_keys
 
-# Tokens de color globales (Gold Theme)
-C_PRI = "#f59e0b"
+C_PRI = "#f50bbe"
 C_BG = "#0c0804"
 C_BORDER = "rgba(245, 158, 11, 0.45)"
-C_TEXT = "#fde68a"
+C_TEXT = "#ff00bb"
 
 THEMES_KEYS = ["cyan", "green", "red", "purple", "gold", "white"]
 
@@ -41,7 +37,6 @@ class DeviceSettingsDialog(QDialog):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
         
-        # Scroll Area para evitar desbordes
         scroll = QScrollArea(self)
         scroll.setObjectName("settingsScroll")
         scroll.setWidgetResizable(True)
@@ -59,7 +54,6 @@ class DeviceSettingsDialog(QDialog):
         
         layout.addWidget(QLabel(f"<h2 style='color: {C_PRI}; font-family: sans-serif; margin-bottom: 5px;'>System Master Configurations</h2>"))
         
-        # API Keys
         layout.addWidget(QLabel("Gemini API Key:"))
         self.inp_gemini = QLineEdit()
         self.inp_gemini.setEchoMode(QLineEdit.EchoMode.Password)
@@ -70,7 +64,6 @@ class DeviceSettingsDialog(QDialog):
         self.inp_openrouter.setEchoMode(QLineEdit.EchoMode.Password)
         layout.addWidget(self.inp_openrouter)
         
-        # AI Provider
         layout.addWidget(QLabel("AI Provider / Brain System:"))
         self.cmb_ai_provider = QComboBox()
         self.cmb_ai_provider.addItem("Google Gemini (Cloud realtime)", "gemini")
@@ -78,7 +71,6 @@ class DeviceSettingsDialog(QDialog):
         self.cmb_ai_provider.addItem("Ollama (Local Offline AI)", "ollama")
         layout.addWidget(self.cmb_ai_provider)
         
-        # Ollama local configuration
         self.ollama_url_lbl = QLabel("Ollama Server URL (Local AI):")
         layout.addWidget(self.ollama_url_lbl)
         self.inp_ollama_url = QLineEdit()
@@ -93,7 +85,6 @@ class DeviceSettingsDialog(QDialog):
         
         self.cmb_ai_provider.currentIndexChanged.connect(self._toggle_ollama_fields)
         
-        # Voces
         layout.addWidget(QLabel("Active Voice Model:"))
         self.cmb_voice = QComboBox()
         self.voices = [
@@ -106,44 +97,45 @@ class DeviceSettingsDialog(QDialog):
             self.cmb_voice.addItem(desc, val)
         layout.addWidget(self.cmb_voice)
         
-        # Tema
         layout.addWidget(QLabel("Theme Palette Scheme:"))
         self.cmb_theme = QComboBox()
         for k in THEMES_KEYS:
             self.cmb_theme.addItem(k.upper(), k)
         layout.addWidget(self.cmb_theme)
         
-        # Nombre Usuario
         layout.addWidget(QLabel("Nombre del Usuario (¿Cómo desea que lo llame?):"))
         self.inp_user_name = QLineEdit()
         self.inp_user_name.setPlaceholderText("Ej: Señor Leguion")
         layout.addWidget(self.inp_user_name)
         
-        # Audio
         layout.addWidget(QLabel("Microphone Input Device:"))
         self.cmb_mic = QComboBox()
         layout.addWidget(self.cmb_mic)
 
         layout.addWidget(QLabel(f"<hr style='border: 0; border-top: 1px solid {C_BORDER}; margin: 5px 0;'>"))
         sens_layout = QHBoxLayout()
-        sens_layout.addWidget(QLabel("Sensibilidad del Micrófono (Puerta de Ruido):"))
-        self.lbl_mic_sens_val = QLabel("0.003")
+        sens_layout.addWidget(QLabel("Sensibilidad del Micrófono (Volumen General):"))
+        self.lbl_mic_sens_val = QLabel("50%")
         self.lbl_mic_sens_val.setStyleSheet(f"font-weight: bold; color: {C_PRI};")
         sens_layout.addStretch()
         sens_layout.addWidget(self.lbl_mic_sens_val)
         layout.addLayout(sens_layout)
 
         self.sld_mic_sens = QSlider(Qt.Orientation.Horizontal)
-        self.sld_mic_sens.setRange(5, 100)
-        self.sld_mic_sens.setValue(30)
-        self.sld_mic_sens.valueChanged.connect(lambda v: self.lbl_mic_sens_val.setText(f"{v/10000:.4f}"))
+        self.sld_mic_sens.setRange(0, 100)
+        
+        nivel_actual = self.obtener_sensibilidad_microfono_actual()
+        self.sld_mic_sens.setValue(nivel_actual)
+        self.lbl_mic_sens_val.setText(f"{nivel_actual}%")
+        
+        self.sld_mic_sens.valueChanged.connect(lambda v: self.lbl_mic_sens_val.setText(f"{v}%"))
+        self.sld_mic_sens.sliderReleased.connect(self._on_mic_slider_released)
         layout.addWidget(self.sld_mic_sens)
         
         layout.addWidget(QLabel("Speaker Output Device:"))
         self.cmb_speaker = QComboBox()
         layout.addWidget(self.cmb_speaker)
 
-        # Cámara
         layout.addWidget(QLabel("Active Camera Device (Gesture Pilot):"))
         self.cmb_camera = QComboBox()
         layout.addWidget(self.cmb_camera)
@@ -153,7 +145,6 @@ class DeviceSettingsDialog(QDialog):
         self.inp_camera_ip.setPlaceholderText("Ej: 192.168.1.50 (o http://192.168.1.50:4747/video)")
         layout.addWidget(self.inp_camera_ip)
         
-        # Rendimiento
         layout.addWidget(QLabel(f"<hr style='border: 0; border-top: 1px solid {C_BORDER}; margin: 8px 0;'><h3 style='color: {C_PRI}; font-family: sans-serif; margin: 0;'>Resource & Visual Management</h3>"))
         perf_layout = QHBoxLayout()
         perf_layout.addWidget(QLabel("Visual Performance Quality (Caps RAM/GPU):"))
@@ -172,7 +163,6 @@ class DeviceSettingsDialog(QDialog):
         self.chk_gpu = QCheckBox("Enable GPU Rendering Acceleration")
         layout.addWidget(self.chk_gpu)
         
-        # SPOTIFY INTEGRATION
         layout.addWidget(QLabel(f"<hr style='border: 0; border-top: 1px solid {C_BORDER}; margin: 8px 0;'><h3 style='color: {C_PRI}; font-family: sans-serif; margin: 0;'>Spotify Integration</h3>"))
         
         self.chk_advanced_spotify = QCheckBox("Configuración de desarrollador avanzada (Opcional)")
@@ -207,7 +197,6 @@ class DeviceSettingsDialog(QDialog):
         
         self.btn_spotify_login.clicked.connect(self.connect_spotify)
         
-        # Botón Guardar
         btn_layout = QHBoxLayout()
         self.btn_save = QPushButton("Save Configurations")
         btn_layout.addStretch()
@@ -215,7 +204,95 @@ class DeviceSettingsDialog(QDialog):
         layout.addLayout(btn_layout)
         
         self.btn_save.clicked.connect(self.save)
+
+        self.poblar_dispositivos_hardware()
         self.load_settings()
+
+    def poblar_dispositivos_hardware(self):
+        self.cmb_mic.clear()
+        self.cmb_speaker.clear()
+        self.cmb_camera.clear()
+
+        try:
+            dispositivos_audio = sd.query_devices()
+            mic_agregados = set()
+            spk_agregados = set()
+            
+            for i, dev in enumerate(dispositivos_audio):
+                nombre = dev['name']
+                if dev['max_input_channels'] > 0 and nombre not in mic_agregados:
+                    self.cmb_mic.addItem(nombre, i)
+                    mic_agregados.add(nombre)
+                
+                if dev['max_output_channels'] > 0 and nombre not in spk_agregados:
+                    self.cmb_speaker.addItem(nombre, i)
+                    spk_agregados.add(nombre)
+                    
+            if self.cmb_mic.count() == 0: self.cmb_mic.addItem("Default Microphone", 0)
+            if self.cmb_speaker.count() == 0: self.cmb_speaker.addItem("Default Speaker", 0)
+        except Exception:
+            self.cmb_mic.addItem("Default Microphone", 0)
+            self.cmb_speaker.addItem("Default Speaker", 0)
+
+        try:
+            from PyQt6.QtMultimedia import QMediaDevices
+            camaras = QMediaDevices.videoInputs()
+            if camaras:
+                for i, cam in enumerate(camaras):
+                    self.cmb_camera.addItem(cam.description(), i)
+            else:
+                self.cmb_camera.addItem("No se encontraron cámaras", -1)
+        except ImportError:
+            self.cmb_camera.addItem("Cámara Principal (Default)", 0)
+            self.cmb_camera.addItem("Cámara Secundaria (USB)", 1)
+            self.cmb_camera.addItem("Cámara Virtual (OBS/DroidCam)", 2)
+
+
+    # 🟢 AISLAMIENTO DE HARDWARE: Estas funciones ahora operan en sub-hilos descartables. 
+    # Esto evita que las librerías choquen en la memoria RAM principal.
+    def obtener_sensibilidad_microfono_actual(self):
+        resultado = [50]
+        def _tarea_lectura():
+            try:
+                import comtypes
+                comtypes.CoInitialize() # Sincroniza SOLO este hilo temporal
+                dispositivos = AudioUtilities.GetDeviceEnumerator()
+                microfono = dispositivos.GetDefaultAudioEndpoint(1, 1) 
+                interfaz = microfono.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+                volumen = cast(interfaz, POINTER(IAudioEndpointVolume))
+                resultado[0] = int(volumen.GetMasterVolumeLevelScalar() * 100)
+                comtypes.CoUninitialize()
+            except Exception:
+                pass
+                
+        # Ejecuta la tarea en cuarentena y espera a que termine
+        hilo = threading.Thread(target=_tarea_lectura)
+        hilo.start()
+        hilo.join()
+        return resultado[0]
+
+    def cambiar_sensibilidad_microfono(self, valor):
+        def _tarea_escritura():
+            try:
+                import comtypes
+                comtypes.CoInitialize()
+                dispositivos = AudioUtilities.GetDeviceEnumerator()
+                microfono = dispositivos.GetDefaultAudioEndpoint(1, 1) 
+                interfaz = microfono.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+                volumen = cast(interfaz, POINTER(IAudioEndpointVolume))
+                volumen.SetMasterVolumeLevelScalar(valor / 100.0, None)
+                print(f"SYS: Sensibilidad del micrófono ajustada al {valor}%")
+                comtypes.CoUninitialize()
+            except Exception as e:
+                print(f"SYS Error al ajustar micrófono: {e}")
+                
+        # Lo lanzamos al fondo para que no trabe la interfaz
+        threading.Thread(target=_tarea_escritura, daemon=True).start()
+
+
+    def _on_mic_slider_released(self):
+        valor_final = self.sld_mic_sens.value()
+        self.cambiar_sensibilidad_microfono(valor_final)
 
     def _toggle_ollama_fields(self):
         is_ollama = (self.cmb_ai_provider.currentData() == "ollama")
@@ -233,7 +310,6 @@ class DeviceSettingsDialog(QDialog):
         self.inp_spotify_uri.setVisible(checked)
 
     def load_settings(self):
-        # Lógica de carga simplificada para el entorno modular
         try:
             cfg = load_api_keys()
             self.inp_gemini.setText(cfg.get("gemini_api_key", ""))
@@ -246,6 +322,26 @@ class DeviceSettingsDialog(QDialog):
             self.inp_user_name.setText(cfg.get("user_name", ""))
             self.inp_camera_ip.setText(cfg.get("camera_ip", ""))
             
+            # 🟢 LA SOLUCIÓN: Buscar por coincidencia de texto, no por índice fijo.
+            mic_name = cfg.get("mic_device_name", "")
+            if mic_name:
+                # Buscamos en qué posición de la lista está el nombre guardado
+                idx = self.cmb_mic.findText(mic_name, Qt.MatchFlag.MatchContains)
+                if idx >= 0: 
+                    self.cmb_mic.setCurrentIndex(idx)
+                
+            spk_name = cfg.get("speaker_device_name", "")
+            if spk_name:
+                idx = self.cmb_speaker.findText(spk_name, Qt.MatchFlag.MatchContains)
+                if idx >= 0: 
+                    self.cmb_speaker.setCurrentIndex(idx)
+                
+            cam_name = cfg.get("camera_device_name", "")
+            if cam_name:
+                idx = self.cmb_camera.findText(cam_name, Qt.MatchFlag.MatchContains)
+                if idx >= 0: 
+                    self.cmb_camera.setCurrentIndex(idx)
+
             spotify_id = cfg.get("spotify_client_id", "")
             spotify_secret = cfg.get("spotify_client_secret", "")
             self.inp_spotify_id.setText(spotify_id)
@@ -256,8 +352,13 @@ class DeviceSettingsDialog(QDialog):
             self._toggle_advanced_spotify(has_custom)
             
             self.lbl_spotify_status.setText(self.check_spotify_auth_status())
-            
             self._toggle_ollama_fields()
+            
+            voice_val = cfg.get("jarvis_voice", "")
+            if voice_val:
+                idx = self.cmb_voice.findData(voice_val)
+                if idx >= 0: self.cmb_voice.setCurrentIndex(idx)
+                
         except Exception as e:
             print(f"[Settings] Fallo al cargar configs locales: {e}")
             self._toggle_ollama_fields()
@@ -276,16 +377,19 @@ class DeviceSettingsDialog(QDialog):
                 "jarvis_voice": self.cmb_voice.currentData(),
                 "jarvis_theme": theme_val,
                 "gpu_acceleration": self.chk_gpu.isChecked(),
-                "mic_sensitivity": self.sld_mic_sens.value() / 10000.0,
+                "mic_sensitivity": self.sld_mic_sens.value(), 
                 "camera_ip": self.inp_camera_ip.text().strip(),
                 "user_name": self.inp_user_name.text().strip() or "Señor",
                 "spotify_client_id": self.inp_spotify_id.text().strip(),
                 "spotify_client_secret": self.inp_spotify_secret.text().strip(),
-                "spotify_redirect_uri": self.inp_spotify_uri.text().strip()
+                "spotify_redirect_uri": self.inp_spotify_uri.text().strip(),
+                
+                "mic_device_name": self.cmb_mic.currentText(),
+                "speaker_device_name": self.cmb_speaker.currentText(),
+                "camera_device_name": self.cmb_camera.currentText()
             }
             save_api_keys(cfg)
             
-            # Comunicamos a la ventana principal (si existe) que el tema cambió
             if hasattr(self.parent(), "apply_new_theme"):
                 self.parent().apply_new_theme(theme_val)
                 
