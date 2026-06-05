@@ -74,7 +74,6 @@ class IRISCore:
         self.has_logged_audio = False 
         self.texto_respuesta = ""
         
-        # 🟢 LECTURA DE HARDWARE CON FILTRO ANTI-CRASH (WDM-KS)
         self.mic_idx = None
         self.spk_idx = None
         
@@ -89,7 +88,6 @@ class IRISCore:
                 for i, d in enumerate(dispositivos):
                     if mic_seleccionado in d['name'] and d['max_input_channels'] > 0:
                         host_api = sd.query_hostapis(d['hostapi'])['name']
-                        # Filtramos las API bloqueantes de Windows que causan el crash -9999
                         if "WDM-KS" not in host_api:
                             self.mic_idx = i
                             break
@@ -126,11 +124,7 @@ class IRISCore:
                 data_bytes = bytes(indata)
                 
                 if getattr(self, 'is_speaking_ui', False):
-                    if self.mic_abierto:
-                        self.mic_abierto = False
-                        self.recognizer.Reset() 
-                        self.audio_buffer.clear() 
-                    
+                    # Solo enviamos silencio mientras ella habla, pero NO cerramos su estado si nos está haciendo una pregunta
                     silencio = b'\x00' * len(data_bytes)
                     loop.call_soon_threadsafe(self.out_queue.put_nowait, silencio)
                     return
@@ -167,7 +161,6 @@ class IRISCore:
             except Exception as e:
                 pass
 
-        # 🟢 PARACAÍDAS DE AUDIO: Si el ID guardado falla, salta al Default inmediatamente
         try:
             stream = sd.InputStream(
                 device=self.mic_idx, samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=2000, callback=callback
@@ -251,18 +244,29 @@ class IRISCore:
                 if sc.turn_complete:
                     log_guardia("🏁 Turno completado por Google.")
                     self.has_logged_audio = False 
-                    self.mic_abierto = False
-                    self.audio_buffer.clear()
+                    
+                    # 🟢 LÓGICA DE CONVERSACIÓN CONTINUA
+                    texto_limpio = self.texto_respuesta.strip()
+                    if texto_limpio.endswith("?"):
+                        log_guardia("❓ I.R.I.S. hizo una pregunta. El micrófono se queda abierto.")
+                        # Al no pasar mic_abierto a False, ella te seguirá escuchando automáticamente
+                    else:
+                        self.mic_abierto = False
+                        self.audio_buffer.clear()
+                        
                     self.texto_respuesta = "" 
                     
                     if self.audio_in_queue.empty() and not getattr(self, 'is_speaking_ui', False):
-                        loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🛡️ MODO SUSPENSIÓN")
-                        loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Sistema en espera.")
+                        if self.mic_abierto:
+                            loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🌐 CONECTADO...")
+                            loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Esperando tu respuesta...")
+                        else:
+                            loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🛡️ MODO SUSPENSIÓN")
+                            loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Sistema en espera.")
 
     async def _play_audio(self):
         loop = asyncio.get_event_loop()
         
-        # 🟢 PARACAÍDAS DE AUDIO PARA LA BOCINA
         try:
             stream = sd.RawOutputStream(
                 device=self.spk_idx, samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16"
@@ -287,8 +291,10 @@ class IRISCore:
                     if self.audio_in_queue.empty():
                         self.is_speaking_ui = False
                         
+                        # 🟢 ACTUALIZACIÓN DE LA UI DESPUÉS DE HABLAR
                         if getattr(self, 'mic_abierto', False):
                             loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🌐 CONECTADO...")
+                            loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Esperando tu respuesta...")
                         else:
                             loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🛡️ MODO SUSPENSIÓN")
                             loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Sistema en espera.")
@@ -306,7 +312,7 @@ class IRISCore:
             "Eres I.R.I.S., una asistente virtual femenina muy avanzada con arquitectura de IA Local. "
             "Tu creador y administrador es Jonathan. "
             "REGLAS DE PERSONALIDAD: Habla en español, sé concisa, elegante, servicial y usa un tono profesional pero amigable. "
-            "🛑 REGLA DE DESPEDIDA ESTRICTA: Si Jonathan indica que ya no necesita ayuda, DESPÍDETE SIEMPRE CON UNA AFIRMACIÓN."
+            "🛑 REGLA DE DESPEDIDA ESTRICTA: Si Jonathan indica que ya no necesita ayuda o termina la conversación, DESPÍDETE SIEMPRE CON UNA AFIRMACIÓN (Nunca con una pregunta)."
         )
         
         loop = asyncio.get_event_loop()
@@ -359,6 +365,19 @@ if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()
     
+    try:
+        import json
+        import os
+        if os.path.exists("jarvis_config.json"):
+            with open("jarvis_config.json", "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+                if cfg.get("gpu_acceleration", False):
+                    os.environ["QT_OPENGL"] = "desktop"  
+                else:
+                    os.environ["QT_OPENGL"] = "software" 
+    except Exception:
+        pass
+
     from PyQt6.QtNetwork import QLocalServer, QLocalSocket
     
     app = QApplication.instance() or QApplication(sys.argv)

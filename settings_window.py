@@ -14,8 +14,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 
 from alerts import JarvisMessageBox
-
-# 🟢 Usando el gestor correcto
 from config_manager import load_api_keys, save_api_keys
 
 C_PRI = "#f59e0b"
@@ -122,7 +120,6 @@ class DeviceSettingsDialog(QDialog):
         self.sld_mic_sens = QSlider(Qt.Orientation.Horizontal)
         self.sld_mic_sens.setRange(0, 100)
         self.sld_mic_sens.setValue(50)
-        
         self.sld_mic_sens.valueChanged.connect(lambda v: self.lbl_mic_sens_val.setText(f"{v}%"))
         layout.addWidget(self.sld_mic_sens)
         
@@ -199,10 +196,10 @@ class DeviceSettingsDialog(QDialog):
         
         self.btn_save.clicked.connect(self.save)
 
-        # 1. Escanear Hardware
+        # 1. Escanear Hardware (Llena las listas)
         self.poblar_dispositivos_hardware()
         
-        # 2. Cargar Selecciones
+        # 2. Cargar Selecciones (Pinta los valores guardados)
         self.load_settings()
 
     def poblar_dispositivos_hardware(self):
@@ -210,7 +207,6 @@ class DeviceSettingsDialog(QDialog):
         self.cmb_speaker.clear()
         self.cmb_camera.clear()
 
-        # 🟢 Lector de Audio Nativo y Limpio (Sin choques)
         try:
             dispositivos_audio = sd.query_devices()
             mic_agregados = set()
@@ -263,41 +259,57 @@ class DeviceSettingsDialog(QDialog):
     def load_settings(self):
         try:
             cfg = load_api_keys()
+            
+            # 🟢 Restauramos TEXTOS Y CLAVES
             self.inp_gemini.setText(cfg.get("gemini_api_key", ""))
             self.inp_openrouter.setText(cfg.get("openrouter_api_key", ""))
+            self.inp_ollama_url.setText(cfg.get("ollama_url", ""))
+            self.inp_ollama_model.setText(cfg.get("ollama_model", ""))
+            self.inp_user_name.setText(cfg.get("user_name", ""))
+            self.inp_camera_ip.setText(cfg.get("camera_ip", ""))
             
+            # 🟢 Restauramos MENÚS DESPLEGABLES EXACTOS
             prov = cfg.get("ai_provider", "gemini")
             idx = self.cmb_ai_provider.findData(prov)
             if idx >= 0: self.cmb_ai_provider.setCurrentIndex(idx)
             
-            self.inp_user_name.setText(cfg.get("user_name", ""))
-            self.inp_camera_ip.setText(cfg.get("camera_ip", ""))
+            voice = cfg.get("jarvis_voice", "")
+            idx = self.cmb_voice.findData(voice)
+            if idx >= 0: self.cmb_voice.setCurrentIndex(idx)
             
-            # 🟢 Restaurar dispositivos buscando texto parcial
-            mic_name = cfg.get("mic_device_name", "")
-            if mic_name:
-                idx = self.cmb_mic.findText(mic_name, Qt.MatchFlag.MatchContains)
-                if idx >= 0: self.cmb_mic.setCurrentIndex(idx)
-                
-            spk_name = cfg.get("speaker_device_name", "")
-            if spk_name:
-                idx = self.cmb_speaker.findText(spk_name, Qt.MatchFlag.MatchContains)
-                if idx >= 0: self.cmb_speaker.setCurrentIndex(idx)
-                
-            cam_name = cfg.get("camera_device_name", "")
-            if cam_name:
-                idx = self.cmb_camera.findText(cam_name, Qt.MatchFlag.MatchContains)
-                if idx >= 0: self.cmb_camera.setCurrentIndex(idx)
-                
-            # Restaurar volumen visual guardado
-            sens = cfg.get("mic_sensitivity", 50)
-            self.sld_mic_sens.setValue(sens)
-            self.lbl_mic_sens_val.setText(f"{sens}%")
+            theme = cfg.get("jarvis_theme", "")
+            idx = self.cmb_theme.findData(theme)
+            if idx >= 0: self.cmb_theme.setCurrentIndex(idx)
 
+            # 🟢 Buscador Inmune a Fallos para Hardware
+            def seleccionar_combo(combo, texto_buscado):
+                if not texto_buscado: return
+                for i in range(combo.count()):
+                    if texto_buscado in combo.itemText(i):
+                        combo.setCurrentIndex(i)
+                        return
+
+            seleccionar_combo(self.cmb_mic, cfg.get("mic_device_name", ""))
+            seleccionar_combo(self.cmb_speaker, cfg.get("speaker_device_name", ""))
+            seleccionar_combo(self.cmb_camera, cfg.get("camera_device_name", ""))
+
+            # 🟢 Restauramos LOS SLIDERS Y CHECKBOXES
+            sens = cfg.get("mic_sensitivity", 50)
+            self.sld_mic_sens.setValue(int(sens))
+            self.lbl_mic_sens_val.setText(f"{sens}%")
+            
+            perf = cfg.get("performance_quality", 80)
+            self.sld_performance.setValue(int(perf))
+            self.lbl_performance_val.setText(f"{perf}%")
+            
+            self.chk_gpu.setChecked(cfg.get("gpu_acceleration", False))
+
+            # 🟢 Restauramos SPOTIFY
             spotify_id = cfg.get("spotify_client_id", "")
             spotify_secret = cfg.get("spotify_client_secret", "")
             self.inp_spotify_id.setText(spotify_id)
             self.inp_spotify_secret.setText(spotify_secret)
+            self.inp_spotify_uri.setText(cfg.get("spotify_redirect_uri", "http://127.0.0.1:8888/callback"))
             
             has_custom = bool(spotify_id or spotify_secret)
             self.chk_advanced_spotify.setChecked(has_custom)
@@ -305,8 +317,9 @@ class DeviceSettingsDialog(QDialog):
             
             self.lbl_spotify_status.setText(self.check_spotify_auth_status())
             self._toggle_ollama_fields()
+            
         except Exception as e:
-            print(f"[Settings] Fallo al cargar configs locales: {e}")
+            print(f"[Settings] Fallo al pintar configs locales: {e}")
             self._toggle_ollama_fields()
             self._toggle_advanced_spotify(False)
 
@@ -330,7 +343,7 @@ class DeviceSettingsDialog(QDialog):
                 "spotify_client_secret": self.inp_spotify_secret.text().strip(),
                 "spotify_redirect_uri": self.inp_spotify_uri.text().strip(),
                 
-                # 🟢 Guardamos el Nombre exacto de los dispositivos, no el índice
+                # Guardamos los nombres seleccionados
                 "mic_device_name": self.cmb_mic.currentText(),
                 "speaker_device_name": self.cmb_speaker.currentText(),
                 "camera_device_name": self.cmb_camera.currentText()
