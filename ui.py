@@ -33,13 +33,13 @@ except ImportError:
 _BA_TZ = timezone(timedelta(hours=-6)) # Ajustado a México (GMT-6)
 
 # Theme Tokens (Green Neon)
-C_PRI = "#00FF00"
-C_PRI_DIM = "#00CC00"
+C_PRI = "#FF00B7"
+C_PRI_DIM = "#FF00B7"
 C_BG = "#000000" 
 C_PANEL = "rgba(0, 0, 0, 0.60)" 
 C_BORDER = "rgba(0, 255, 0, 0.45)"
-C_TEXT = "#FFFFFF"
-NEON = "#00FF00"
+C_TEXT = "#FF00B7"
+NEON = "#FF00B7"
 
 class WebBridge(QObject):
     def __init__(self, orb):
@@ -389,7 +389,7 @@ class MainWindow(QMainWindow):
         self.central_widget.setObjectName("centralWidget")
         self.setCentralWidget(self.central_widget)
         
-        self.lbl_brand = QLabel("J A R V I S", self.central_widget)
+        self.lbl_brand = QLabel("I R I S", self.central_widget)
         font = QFont("Century Gothic", 20, QFont.Weight.Bold)
         font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 10.0)
         self.lbl_brand.setFont(font)
