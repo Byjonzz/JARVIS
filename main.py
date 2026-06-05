@@ -9,7 +9,6 @@ import os
 import collections
 import importlib
 import datetime
-from dotenv import load_dotenv
 import traceback
 import sounddevice as sd
 from vosk import Model, KaldiRecognizer, SetLogLevel
@@ -75,31 +74,38 @@ class IRISCore:
         self.has_logged_audio = False 
         self.texto_respuesta = ""
         
+        # 🟢 LECTURA DE HARDWARE CON FILTRO ANTI-CRASH (WDM-KS)
+        self.mic_idx = None
+        self.spk_idx = None
+        
         try:
             cfg = load_api_keys()
-            # El nombre exacto que seleccionaste en la interfaz
             mic_seleccionado = cfg.get("mic_device_name", "") 
             spk_seleccionado = cfg.get("speaker_device_name", "")
             
-            # Encontramos el número (ID) de ese micrófono en Windows
-            import sounddevice as sd
             dispositivos = sd.query_devices()
             
-            self.mic_id = None
-            self.spk_id = None
-            
-            for i, dev in enumerate(dispositivos):
-                if mic_seleccionado in dev['name'] and dev['max_input_channels'] > 0:
-                    self.mic_id = i
-                if spk_seleccionado in dev['name'] and dev['max_output_channels'] > 0:
-                    self.spk_id = i
-                    
-            if self.mic_id is not None: log_guardia(f"⚙️ Forzando Micrófono: {mic_seleccionado} (ID: {self.mic_id})")
-            if self.spk_id is not None: log_guardia(f"⚙️ Forzando Bocina: {spk_seleccionado} (ID: {self.spk_id})")
+            if mic_seleccionado:
+                for i, d in enumerate(dispositivos):
+                    if mic_seleccionado in d['name'] and d['max_input_channels'] > 0:
+                        host_api = sd.query_hostapis(d['hostapi'])['name']
+                        # Filtramos las API bloqueantes de Windows que causan el crash -9999
+                        if "WDM-KS" not in host_api:
+                            self.mic_idx = i
+                            break
+                            
+            if spk_seleccionado:
+                for i, d in enumerate(dispositivos):
+                    if spk_seleccionado in d['name'] and d['max_output_channels'] > 0:
+                        host_api = sd.query_hostapis(d['hostapi'])['name']
+                        if "WDM-KS" not in host_api:
+                            self.spk_idx = i
+                            break
+
+            if self.mic_idx is not None: log_guardia(f"⚙️ Asignando Micrófono: {mic_seleccionado} (ID Seguro: {self.mic_idx})")
+            if self.spk_idx is not None: log_guardia(f"⚙️ Asignando Bocina: {spk_seleccionado} (ID Seguro: {self.spk_idx})")
         except Exception as e:
-            self.mic_id = None
-            self.spk_id = None
-            log_guardia(f"⚠️ No se pudo leer configuración de audio. Usando Default. {e}")
+            log_guardia(f"⚠️ Fallo al leer configuración de hardware. Usando valores por defecto. Error: {e}")
         
         log_guardia("🧠 [INIT] Cargando modelo Vosk para STT local...")
         self.vosk_model = Model("vosk_model")
@@ -161,9 +167,16 @@ class IRISCore:
             except Exception as e:
                 pass
 
-        stream = sd.InputStream(
-            device=self.mic_id, samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=2000, callback=callback
-        )
+        # 🟢 PARACAÍDAS DE AUDIO: Si el ID guardado falla, salta al Default inmediatamente
+        try:
+            stream = sd.InputStream(
+                device=self.mic_idx, samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=2000, callback=callback
+            )
+        except Exception as e:
+            log_guardia(f"⚠️ Micrófono asignado falló o no existe. Usando Default. Error: {e}")
+            stream = sd.InputStream(
+                device=None, samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=2000, callback=callback
+            )
         
         with stream:
             while True:
@@ -248,9 +261,18 @@ class IRISCore:
 
     async def _play_audio(self):
         loop = asyncio.get_event_loop()
-        stream = sd.RawOutputStream(
-            device=self.spk_id, samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16"
-        )
+        
+        # 🟢 PARACAÍDAS DE AUDIO PARA LA BOCINA
+        try:
+            stream = sd.RawOutputStream(
+                device=self.spk_idx, samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16"
+            )
+        except Exception as e:
+            log_guardia(f"⚠️ Bocina asignada falló o no existe. Usando Default. Error: {e}")
+            stream = sd.RawOutputStream(
+                device=None, samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16"
+            )
+
         try:
             with stream:
                 stream.start()
@@ -282,7 +304,7 @@ class IRISCore:
         tools = [{"function_declarations": TOOL_DECLARATIONS}] if TOOL_DECLARATIONS else None
         instruccion_base = (
             "Eres I.R.I.S., una asistente virtual femenina muy avanzada con arquitectura de IA Local. "
-            "Tu creador y administrador es Jonathan (futuro TSU en Desarrollo de Software). "
+            "Tu creador y administrador es Jonathan. "
             "REGLAS DE PERSONALIDAD: Habla en español, sé concisa, elegante, servicial y usa un tono profesional pero amigable. "
             "🛑 REGLA DE DESPEDIDA ESTRICTA: Si Jonathan indica que ya no necesita ayuda, DESPÍDETE SIEMPRE CON UNA AFIRMACIÓN."
         )
@@ -300,14 +322,12 @@ class IRISCore:
                     system_instruction=types.Content(parts=[types.Part.from_text(text=instruccion_base)]),
                 )
 
-                # 🟢 MAGIA VISUAL: Avisamos a la interfaz que se está conectando
                 loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🔌 CONECTANDO...")
                 log_guardia("🔌 Intentando conectar con Gemini Live...")
                 
                 async with self.client.aio.live.connect(model=MODEL, config=config) as session:
                     log_guardia("✅ Conexión con Gemini establecida.")
                     
-                    # 🟢 MAGIA VISUAL: Avisamos a la interfaz que la conexión fue un éxito
                     loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🛡️ MODO SUSPENSIÓN")
                     loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Sistema en espera.")
                     
@@ -324,7 +344,6 @@ class IRISCore:
                 self.recognizer.Reset()
                 log_guardia(f"⚠️ Reiniciando conexión: {e}")
                 
-                # 🟢 MAGIA VISUAL: Avisamos a la interfaz si se corta el internet
                 loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "⚠️ RECONECTANDO...")
                 loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Restableciendo conexión...")
                 await asyncio.sleep(2)

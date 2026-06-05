@@ -1,8 +1,5 @@
 import os
 import threading
-from ctypes import cast, POINTER
-from comtypes import CLSCTX_ALL
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 import webbrowser
 import urllib.parse
 from pathlib import Path
@@ -18,12 +15,13 @@ from PyQt6.QtCore import Qt, QTimer
 
 from alerts import JarvisMessageBox
 
+# 🟢 Usando el gestor correcto
 from config_manager import load_api_keys, save_api_keys
 
-C_PRI = "#f50bbe"
+C_PRI = "#f59e0b"
 C_BG = "#0c0804"
 C_BORDER = "rgba(245, 158, 11, 0.45)"
-C_TEXT = "#ff00bb"
+C_TEXT = "#fde68a"
 
 THEMES_KEYS = ["cyan", "green", "red", "purple", "gold", "white"]
 
@@ -114,7 +112,7 @@ class DeviceSettingsDialog(QDialog):
 
         layout.addWidget(QLabel(f"<hr style='border: 0; border-top: 1px solid {C_BORDER}; margin: 5px 0;'>"))
         sens_layout = QHBoxLayout()
-        sens_layout.addWidget(QLabel("Sensibilidad del Micrófono (Volumen General):"))
+        sens_layout.addWidget(QLabel("Sensibilidad del Micrófono (Software Gain):"))
         self.lbl_mic_sens_val = QLabel("50%")
         self.lbl_mic_sens_val.setStyleSheet(f"font-weight: bold; color: {C_PRI};")
         sens_layout.addStretch()
@@ -123,13 +121,9 @@ class DeviceSettingsDialog(QDialog):
 
         self.sld_mic_sens = QSlider(Qt.Orientation.Horizontal)
         self.sld_mic_sens.setRange(0, 100)
-        
-        nivel_actual = self.obtener_sensibilidad_microfono_actual()
-        self.sld_mic_sens.setValue(nivel_actual)
-        self.lbl_mic_sens_val.setText(f"{nivel_actual}%")
+        self.sld_mic_sens.setValue(50)
         
         self.sld_mic_sens.valueChanged.connect(lambda v: self.lbl_mic_sens_val.setText(f"{v}%"))
-        self.sld_mic_sens.sliderReleased.connect(self._on_mic_slider_released)
         layout.addWidget(self.sld_mic_sens)
         
         layout.addWidget(QLabel("Speaker Output Device:"))
@@ -205,7 +199,10 @@ class DeviceSettingsDialog(QDialog):
         
         self.btn_save.clicked.connect(self.save)
 
+        # 1. Escanear Hardware
         self.poblar_dispositivos_hardware()
+        
+        # 2. Cargar Selecciones
         self.load_settings()
 
     def poblar_dispositivos_hardware(self):
@@ -213,86 +210,40 @@ class DeviceSettingsDialog(QDialog):
         self.cmb_speaker.clear()
         self.cmb_camera.clear()
 
+        # 🟢 Lector de Audio Nativo y Limpio (Sin choques)
         try:
             dispositivos_audio = sd.query_devices()
             mic_agregados = set()
             spk_agregados = set()
             
-            for i, dev in enumerate(dispositivos_audio):
+            for dev in dispositivos_audio:
                 nombre = dev['name']
                 if dev['max_input_channels'] > 0 and nombre not in mic_agregados:
-                    self.cmb_mic.addItem(nombre, i)
+                    self.cmb_mic.addItem(nombre)
                     mic_agregados.add(nombre)
                 
                 if dev['max_output_channels'] > 0 and nombre not in spk_agregados:
-                    self.cmb_speaker.addItem(nombre, i)
+                    self.cmb_speaker.addItem(nombre)
                     spk_agregados.add(nombre)
                     
-            if self.cmb_mic.count() == 0: self.cmb_mic.addItem("Default Microphone", 0)
-            if self.cmb_speaker.count() == 0: self.cmb_speaker.addItem("Default Speaker", 0)
+            if self.cmb_mic.count() == 0: self.cmb_mic.addItem("Default Microphone")
+            if self.cmb_speaker.count() == 0: self.cmb_speaker.addItem("Default Speaker")
         except Exception:
-            self.cmb_mic.addItem("Default Microphone", 0)
-            self.cmb_speaker.addItem("Default Speaker", 0)
+            self.cmb_mic.addItem("Default Microphone")
+            self.cmb_speaker.addItem("Default Speaker")
 
         try:
             from PyQt6.QtMultimedia import QMediaDevices
             camaras = QMediaDevices.videoInputs()
             if camaras:
-                for i, cam in enumerate(camaras):
-                    self.cmb_camera.addItem(cam.description(), i)
+                for cam in camaras:
+                    self.cmb_camera.addItem(cam.description())
             else:
-                self.cmb_camera.addItem("No se encontraron cámaras", -1)
+                self.cmb_camera.addItem("No se encontraron cámaras")
         except ImportError:
-            self.cmb_camera.addItem("Cámara Principal (Default)", 0)
-            self.cmb_camera.addItem("Cámara Secundaria (USB)", 1)
-            self.cmb_camera.addItem("Cámara Virtual (OBS/DroidCam)", 2)
-
-
-    # 🟢 AISLAMIENTO DE HARDWARE: Estas funciones ahora operan en sub-hilos descartables. 
-    # Esto evita que las librerías choquen en la memoria RAM principal.
-    def obtener_sensibilidad_microfono_actual(self):
-        resultado = [50]
-        def _tarea_lectura():
-            try:
-                import comtypes
-                comtypes.CoInitialize() # Sincroniza SOLO este hilo temporal
-                dispositivos = AudioUtilities.GetDeviceEnumerator()
-                microfono = dispositivos.GetDefaultAudioEndpoint(1, 1) 
-                interfaz = microfono.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-                volumen = cast(interfaz, POINTER(IAudioEndpointVolume))
-                resultado[0] = int(volumen.GetMasterVolumeLevelScalar() * 100)
-                comtypes.CoUninitialize()
-            except Exception:
-                pass
-                
-        # Ejecuta la tarea en cuarentena y espera a que termine
-        hilo = threading.Thread(target=_tarea_lectura)
-        hilo.start()
-        hilo.join()
-        return resultado[0]
-
-    def cambiar_sensibilidad_microfono(self, valor):
-        def _tarea_escritura():
-            try:
-                import comtypes
-                comtypes.CoInitialize()
-                dispositivos = AudioUtilities.GetDeviceEnumerator()
-                microfono = dispositivos.GetDefaultAudioEndpoint(1, 1) 
-                interfaz = microfono.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-                volumen = cast(interfaz, POINTER(IAudioEndpointVolume))
-                volumen.SetMasterVolumeLevelScalar(valor / 100.0, None)
-                print(f"SYS: Sensibilidad del micrófono ajustada al {valor}%")
-                comtypes.CoUninitialize()
-            except Exception as e:
-                print(f"SYS Error al ajustar micrófono: {e}")
-                
-        # Lo lanzamos al fondo para que no trabe la interfaz
-        threading.Thread(target=_tarea_escritura, daemon=True).start()
-
-
-    def _on_mic_slider_released(self):
-        valor_final = self.sld_mic_sens.value()
-        self.cambiar_sensibilidad_microfono(valor_final)
+            self.cmb_camera.addItem("Cámara Principal (Default)")
+            self.cmb_camera.addItem("Cámara Secundaria (USB)")
+            self.cmb_camera.addItem("Cámara Virtual (OBS/DroidCam)")
 
     def _toggle_ollama_fields(self):
         is_ollama = (self.cmb_ai_provider.currentData() == "ollama")
@@ -322,25 +273,26 @@ class DeviceSettingsDialog(QDialog):
             self.inp_user_name.setText(cfg.get("user_name", ""))
             self.inp_camera_ip.setText(cfg.get("camera_ip", ""))
             
-            # 🟢 LA SOLUCIÓN: Buscar por coincidencia de texto, no por índice fijo.
+            # 🟢 Restaurar dispositivos buscando texto parcial
             mic_name = cfg.get("mic_device_name", "")
             if mic_name:
-                # Buscamos en qué posición de la lista está el nombre guardado
                 idx = self.cmb_mic.findText(mic_name, Qt.MatchFlag.MatchContains)
-                if idx >= 0: 
-                    self.cmb_mic.setCurrentIndex(idx)
+                if idx >= 0: self.cmb_mic.setCurrentIndex(idx)
                 
             spk_name = cfg.get("speaker_device_name", "")
             if spk_name:
                 idx = self.cmb_speaker.findText(spk_name, Qt.MatchFlag.MatchContains)
-                if idx >= 0: 
-                    self.cmb_speaker.setCurrentIndex(idx)
+                if idx >= 0: self.cmb_speaker.setCurrentIndex(idx)
                 
             cam_name = cfg.get("camera_device_name", "")
             if cam_name:
                 idx = self.cmb_camera.findText(cam_name, Qt.MatchFlag.MatchContains)
-                if idx >= 0: 
-                    self.cmb_camera.setCurrentIndex(idx)
+                if idx >= 0: self.cmb_camera.setCurrentIndex(idx)
+                
+            # Restaurar volumen visual guardado
+            sens = cfg.get("mic_sensitivity", 50)
+            self.sld_mic_sens.setValue(sens)
+            self.lbl_mic_sens_val.setText(f"{sens}%")
 
             spotify_id = cfg.get("spotify_client_id", "")
             spotify_secret = cfg.get("spotify_client_secret", "")
@@ -353,12 +305,6 @@ class DeviceSettingsDialog(QDialog):
             
             self.lbl_spotify_status.setText(self.check_spotify_auth_status())
             self._toggle_ollama_fields()
-            
-            voice_val = cfg.get("jarvis_voice", "")
-            if voice_val:
-                idx = self.cmb_voice.findData(voice_val)
-                if idx >= 0: self.cmb_voice.setCurrentIndex(idx)
-                
         except Exception as e:
             print(f"[Settings] Fallo al cargar configs locales: {e}")
             self._toggle_ollama_fields()
@@ -384,6 +330,7 @@ class DeviceSettingsDialog(QDialog):
                 "spotify_client_secret": self.inp_spotify_secret.text().strip(),
                 "spotify_redirect_uri": self.inp_spotify_uri.text().strip(),
                 
+                # 🟢 Guardamos el Nombre exacto de los dispositivos, no el índice
                 "mic_device_name": self.cmb_mic.currentText(),
                 "speaker_device_name": self.cmb_speaker.currentText(),
                 "camera_device_name": self.cmb_camera.currentText()
