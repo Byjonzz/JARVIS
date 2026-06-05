@@ -10,4 +10,4 @@ __pycache__/
 *.pyc
 guardia_log.txt
 
-.config/chroma_memory/
+.config/
