@@ -77,31 +77,47 @@ class IRISCore:
         self.mic_idx = None
         self.spk_idx = None
         
+        # 🟢 FILTRO INTELIGENTE DE AUDIO WINDOWS (MME / DirectSound)
         try:
             cfg = load_api_keys()
             mic_seleccionado = cfg.get("mic_device_name", "") 
             spk_seleccionado = cfg.get("speaker_device_name", "")
-            
             dispositivos = sd.query_devices()
             
             if mic_seleccionado:
                 for i, d in enumerate(dispositivos):
                     if mic_seleccionado in d['name'] and d['max_input_channels'] > 0:
                         host_api = sd.query_hostapis(d['hostapi'])['name']
-                        if "WDM-KS" not in host_api:
+                        # Buscamos el conductor amigable que hace auto-resampling
+                        if "MME" in host_api or "DirectSound" in host_api:
                             self.mic_idx = i
                             break
+                # Si no hay MME, agarramos cualquiera que no sea WDM-KS
+                if self.mic_idx is None:
+                    for i, d in enumerate(dispositivos):
+                        if mic_seleccionado in d['name'] and d['max_input_channels'] > 0:
+                            host_api = sd.query_hostapis(d['hostapi'])['name']
+                            if "WDM-KS" not in host_api:
+                                self.mic_idx = i
+                                break
                             
             if spk_seleccionado:
                 for i, d in enumerate(dispositivos):
                     if spk_seleccionado in d['name'] and d['max_output_channels'] > 0:
                         host_api = sd.query_hostapis(d['hostapi'])['name']
-                        if "WDM-KS" not in host_api:
+                        if "MME" in host_api or "DirectSound" in host_api:
                             self.spk_idx = i
                             break
+                if self.spk_idx is None:
+                    for i, d in enumerate(dispositivos):
+                        if spk_seleccionado in d['name'] and d['max_output_channels'] > 0:
+                            host_api = sd.query_hostapis(d['hostapi'])['name']
+                            if "WDM-KS" not in host_api:
+                                self.spk_idx = i
+                                break
 
-            if self.mic_idx is not None: log_guardia(f"⚙️ Asignando Micrófono: {mic_seleccionado} (ID Seguro: {self.mic_idx})")
-            if self.spk_idx is not None: log_guardia(f"⚙️ Asignando Bocina: {spk_seleccionado} (ID Seguro: {self.spk_idx})")
+            if self.mic_idx is not None: log_guardia(f"⚙️ Asignando Micrófono SEGURO: {mic_seleccionado} (ID: {self.mic_idx})")
+            if self.spk_idx is not None: log_guardia(f"⚙️ Asignando Bocina SEGURA: {spk_seleccionado} (ID: {self.spk_idx})")
         except Exception as e:
             log_guardia(f"⚠️ Fallo al leer configuración de hardware. Usando valores por defecto. Error: {e}")
         
@@ -123,8 +139,15 @@ class IRISCore:
             try:
                 data_bytes = bytes(indata)
                 
+                try:
+                    # 🟢 NERVIO DE VOZ: Calcula el volumen del micrófono en tiempo real y lo inyecta a la esfera 3D
+                    nivel = max(abs(int.from_bytes(data_bytes[i:i+2], 'little', signed=True)) for i in range(0, len(data_bytes), 2)) / 32768.0
+                    if hasattr(self.ui, '_win') and hasattr(self.ui._win, 'orb'):
+                        loop.call_soon_threadsafe(self.ui._win.orb.set_audio, nivel)
+                except:
+                    pass    
+                
                 if getattr(self, 'is_speaking_ui', False):
-                    # Solo enviamos silencio mientras ella habla, pero NO cerramos su estado si nos está haciendo una pregunta
                     silencio = b'\x00' * len(data_bytes)
                     loop.call_soon_threadsafe(self.out_queue.put_nowait, silencio)
                     return
@@ -161,19 +184,27 @@ class IRISCore:
             except Exception as e:
                 pass
 
+        stream = None
         try:
             stream = sd.InputStream(
                 device=self.mic_idx, samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=2000, callback=callback
             )
         except Exception as e:
-            log_guardia(f"⚠️ Micrófono asignado falló o no existe. Usando Default. Error: {e}")
-            stream = sd.InputStream(
-                device=None, samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=2000, callback=callback
-            )
-        
-        with stream:
+            log_guardia(f"⚠️ Micrófono asignado falló ({e}). Intentando forzar el Default de Windows...")
+            try:
+                stream = sd.InputStream(
+                    device=sd.default.device[0], samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=2000, callback=callback
+                )
+            except Exception as e2:
+                log_guardia(f"🔥 FATAL: No se pudo abrir NINGÚN micrófono. Verifique hardware. {e2}")
+
+        if stream is not None:
+            with stream:
+                while True:
+                    await asyncio.sleep(0.1)
+        else:
             while True:
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(1)
 
     async def _send_realtime(self, session):
         while True:
@@ -245,11 +276,9 @@ class IRISCore:
                     log_guardia("🏁 Turno completado por Google.")
                     self.has_logged_audio = False 
                     
-                    # 🟢 LÓGICA DE CONVERSACIÓN CONTINUA
                     texto_limpio = self.texto_respuesta.strip()
                     if texto_limpio.endswith("?"):
                         log_guardia("❓ I.R.I.S. hizo una pregunta. El micrófono se queda abierto.")
-                        # Al no pasar mic_abierto a False, ella te seguirá escuchando automáticamente
                     else:
                         self.mic_abierto = False
                         self.audio_buffer.clear()
@@ -266,18 +295,21 @@ class IRISCore:
 
     async def _play_audio(self):
         loop = asyncio.get_event_loop()
-        
+        stream = None
         try:
             stream = sd.RawOutputStream(
                 device=self.spk_idx, samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16"
             )
         except Exception as e:
-            log_guardia(f"⚠️ Bocina asignada falló o no existe. Usando Default. Error: {e}")
-            stream = sd.RawOutputStream(
-                device=None, samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16"
-            )
+            log_guardia(f"⚠️ Bocina asignada falló ({e}). Intentando forzar Default...")
+            try:
+                stream = sd.RawOutputStream(
+                    device=sd.default.device[1], samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16"
+                )
+            except Exception as e2:
+                log_guardia(f"🔥 FATAL: No se pudo abrir NINGUNA bocina. Error: {e2}")
 
-        try:
+        if stream is not None:
             with stream:
                 stream.start()
                 while True:
@@ -291,15 +323,15 @@ class IRISCore:
                     if self.audio_in_queue.empty():
                         self.is_speaking_ui = False
                         
-                        # 🟢 ACTUALIZACIÓN DE LA UI DESPUÉS DE HABLAR
                         if getattr(self, 'mic_abierto', False):
                             loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🌐 CONECTADO...")
                             loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Esperando tu respuesta...")
                         else:
                             loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🛡️ MODO SUSPENSIÓN")
                             loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Sistema en espera.")
-        except Exception as e:
-            pass
+        else:
+            while True:
+                await asyncio.sleep(1)
 
     async def run(self):
         log_guardia("🚀 [RUN] Iniciando ciclo principal asíncrono...")

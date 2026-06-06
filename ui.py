@@ -1,71 +1,46 @@
-"""ui.py — 100% Custom Dynamic Themed Bento PyQt6 User Interface para I.R.I.S."""
+"""ui.py — I.R.I.S. Pure WebGL HUD Interface (FULLSCREEN)"""
 from __future__ import annotations
 import sys
 import os
 import json
-import psutil
-import threading
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QGridLayout, QLabel, QPushButton, QLineEdit, QTextEdit, 
-    QListWidget, QListWidgetItem, QProgressBar
-)
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, pyqtSlot, QObject, QTimer
-from PyQt6.QtGui import QFont, QIcon, QMouseEvent
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
 
 from settings_window import DeviceSettingsDialog
-from camera_hud import CameraPreviewWindow
-from alerts import JarvisMessageBox
 
 try:
     from config_manager import load_api_keys
 except ImportError:
     def load_api_keys(): return {}
 
-try:
-    import qtawesome as qta
-    HAS_QTA = True
-except ImportError:
-    HAS_QTA = False
-
-# Zona Horaria
 _BA_TZ = timezone(timedelta(hours=-6))
 
-# 🟢 DICCIONARIO MAESTRO DE TEMAS
 THEMES = {
-    "green": {"PRI": "#00FF00", "PRI_DIM": "#00CC00", "BG": "#000000", "TEXT": "#FFFFFF", "BORDER": "rgba(0, 255, 0, 0.45)", "PANEL": "rgba(0, 0, 0, 0.60)"},
-    "cyan": {"PRI": "#00FFFF", "PRI_DIM": "#00CCCC", "BG": "#000000", "TEXT": "#FFFFFF", "BORDER": "rgba(0, 255, 255, 0.45)", "PANEL": "rgba(0, 0, 0, 0.60)"},
-    "red": {"PRI": "#FF0000", "PRI_DIM": "#CC0000", "BG": "#000000", "TEXT": "#FFFFFF", "BORDER": "rgba(255, 0, 0, 0.45)", "PANEL": "rgba(0, 0, 0, 0.60)"},
-    "purple": {"PRI": "#9D00FF", "PRI_DIM": "#7A00CC", "BG": "#000000", "TEXT": "#FFFFFF", "BORDER": "rgba(157, 0, 255, 0.45)", "PANEL": "rgba(0, 0, 0, 0.60)"},
-    "gold": {"PRI": "#f59e0b", "PRI_DIM": "#d97706", "BG": "#0c0804", "TEXT": "#fde68a", "BORDER": "rgba(245, 158, 11, 0.45)", "PANEL": "rgba(0, 0, 0, 0.60)"},
-    "white": {"PRI": "#FFFFFF", "PRI_DIM": "#CCCCCC", "BG": "#000000", "TEXT": "#FFFFFF", "BORDER": "rgba(255, 255, 255, 0.45)", "PANEL": "rgba(0, 0, 0, 0.60)"}
+    "green": {"PRI": "#00FF00", "PRI_DIM": "#00CC00", "BG": "#000000", "TEXT": "#FFFFFF", "BORDER": "rgba(0, 255, 0, 0.45)"},
+    "cyan": {"PRI": "#00FFFF", "PRI_DIM": "#00CCCC", "BG": "#000000", "TEXT": "#FFFFFF", "BORDER": "rgba(0, 255, 255, 0.45)"},
+    "red": {"PRI": "#FF0000", "PRI_DIM": "#CC0000", "BG": "#000000", "TEXT": "#FFFFFF", "BORDER": "rgba(255, 0, 0, 0.45)"},
+    "purple": {"PRI": "#9D00FF", "PRI_DIM": "#7A00CC", "BG": "#000000", "TEXT": "#FFFFFF", "BORDER": "rgba(157, 0, 255, 0.45)"},
+    "gold": {"PRI": "#f59e0b", "PRI_DIM": "#d97706", "BG": "#0c0804", "TEXT": "#fde68a", "BORDER": "rgba(245, 158, 11, 0.45)"},
+    "white": {"PRI": "#FFFFFF", "PRI_DIM": "#CCCCCC", "BG": "#000000", "TEXT": "#FFFFFF", "BORDER": "rgba(255, 255, 255, 0.45)"}
 }
 
-# Variables Globales por defecto
 C_PRI = THEMES["green"]["PRI"]
 C_PRI_DIM = THEMES["green"]["PRI_DIM"]
-C_BG = THEMES["green"]["BG"]
-C_PANEL = THEMES["green"]["PANEL"]
-C_BORDER = THEMES["green"]["BORDER"]
 C_TEXT = THEMES["green"]["TEXT"]
-NEON = THEMES["green"]["PRI"]
+C_BORDER = THEMES["green"]["BORDER"]
 
-# 🟢 FUNCIÓN PARA CAMBIAR LOS COLORES EN TIEMPO REAL
 def set_global_theme(theme_name):
-    global C_PRI, C_PRI_DIM, C_BG, C_PANEL, C_BORDER, C_TEXT, NEON
+    global C_PRI, C_PRI_DIM, C_TEXT, C_BORDER
     t = THEMES.get(theme_name, THEMES["green"])
     C_PRI = t["PRI"]
     C_PRI_DIM = t["PRI_DIM"]
-    C_BG = t["BG"]
-    C_PANEL = t["PANEL"]
-    C_BORDER = t["BORDER"]
     C_TEXT = t["TEXT"]
-    NEON = t["PRI"]
+    C_BORDER = t["BORDER"]
 
 class WebBridge(QObject):
     def __init__(self, orb):
@@ -73,12 +48,26 @@ class WebBridge(QObject):
         self.orb = orb
 
     @pyqtSlot()
-    def toggle_mute(self):
-        if self.orb.ui: self.orb.ui._win._toggle_mute()
-
-    @pyqtSlot()
     def request_theme(self):
         QTimer.singleShot(0, self.orb.sync_theme)
+
+    @pyqtSlot()
+    def close_app(self):
+        QApplication.quit()
+
+    @pyqtSlot()
+    def minimize_app(self):
+        if self.orb.ui and hasattr(self.orb.ui, '_win'):
+            self.orb.ui._win.showMinimized()
+
+    @pyqtSlot()
+    def open_settings(self):
+        if self.orb.ui and hasattr(self.orb.ui, '_win'):
+            self.orb.ui._win._open_settings()
+
+    @pyqtSlot(int, int)
+    def move_window(self, dx, dy):
+        pass # Desactivado porque ahora estamos en pantalla completa absoluta
 
 class CustomParticleOrb(QWidget):
     audio_signal = pyqtSignal(float)
@@ -91,16 +80,19 @@ class CustomParticleOrb(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--enable-webgl --ignore-gpu-blocklist --enable-gpu-rasterization"
+
         self.web_view = QWebEngineView(self)
-        self.web_view.setStyleSheet("background: transparent;")
-        self.web_view.page().setBackgroundColor(Qt.GlobalColor.transparent)
+        self.web_view.setStyleSheet("background: #000000;")
         
         try:
             from PyQt6.QtWebEngineCore import QWebEngineSettings
             settings = self.web_view.settings()
             settings.setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
-            settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, False)
-        except Exception as e:
+            settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+            settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
+            settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+        except Exception:
             pass
             
         self.channel = QWebChannel()
@@ -110,7 +102,6 @@ class CustomParticleOrb(QWidget):
         
         sphere_path = Path(__file__).parent / "assets" / "sphere.html"
         self.web_view.setUrl(QUrl.fromLocalFile(str(sphere_path.absolute())))
-        
         layout.addWidget(self.web_view)
         
         self.audio_signal.connect(self._safe_set_audio)
@@ -121,14 +112,14 @@ class CustomParticleOrb(QWidget):
     def _on_load_finished(self, ok):
         if ok:
             self.sync_theme()
-            self.set_state("MUTED" if self.ui.muted else "LISTENING")
+            self.set_state("LISTENING")
 
     def sync_theme(self): self.theme_signal.emit()
     def set_audio(self, level: float): self.audio_signal.emit(level)
     def set_state(self, state: str): self.state_signal.emit(state)
 
     def _safe_sync_theme(self):
-        colors = {'PRI': C_PRI, 'PRI_DIM': C_PRI_DIM, 'TEXT': C_TEXT, 'BG': C_BG}
+        colors = {'PRI': C_PRI, 'PRI_DIM': C_PRI_DIM, 'TEXT': C_TEXT, 'BORDER': C_BORDER}
         self.web_view.page().runJavaScript(f"if (window.setThemeColors) window.setThemeColors({json.dumps(colors)});")
 
     def _safe_set_audio(self, level: float):
@@ -137,397 +128,40 @@ class CustomParticleOrb(QWidget):
     def _safe_set_state(self, state: str):
         self.web_view.page().runJavaScript(f"if (window.updateState) window.updateState('{state}');")
 
-class ClockWidget(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("ClockWidget")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.lbl_time = QLabel("12:00:00")
-        font_t = QFont("Century Gothic", 28, QFont.Weight.Bold)
-        font_t.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.0)
-        self.lbl_time.setFont(font_t)
-        self.lbl_time.setAlignment(Qt.AlignmentFlag.AlignRight)
-        layout.addWidget(self.lbl_time)
-        
-        self.lbl_date = QLabel("Cargando fecha...")
-        self.lbl_date.setAlignment(Qt.AlignmentFlag.AlignRight)
-        layout.addWidget(self.lbl_date)
-        
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.tick)
-        self.timer.start(1000)
-        self.tick()
-        self.update_style()
-        
-    def tick(self):
-        try:
-            now = datetime.now(_BA_TZ)
-            self.lbl_time.setText(now.strftime("%I:%M:%S %p"))
-            self.lbl_date.setText(now.strftime("%A, %d %B %Y"))
-        except Exception:
-            pass
-
-    def update_style(self):
-        self.setStyleSheet("QWidget#ClockWidget { background: transparent; border: none; }")
-        self.lbl_time.setStyleSheet("color: white; border: none; background: transparent;")
-        self.lbl_date.setStyleSheet(f"font-size: 13px; letter-spacing: 1px; color: {C_PRI}; border: none; font-weight: bold; background: transparent;")
-
-class WeatherWidget(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("WeatherWidget")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 12, 15, 12)
-        
-        header = QHBoxLayout()
-        self.lbl_title = QLabel("WEATHER REPORT")
-        header.addWidget(self.lbl_title)
-        header.addStretch()
-        layout.addLayout(header)
-        
-        info = QHBoxLayout()
-        self.lbl_temp = QLabel("18°C")
-        self.lbl_desc = QLabel("Parcialmente Nublado")
-        info.addWidget(self.lbl_temp)
-        info.addWidget(self.lbl_desc)
-        info.addStretch()
-        layout.addLayout(info)
-        layout.addStretch()
-        
-        self.update_style()
-        
-    def update_style(self):
-        self.setStyleSheet(f"QWidget#WeatherWidget {{ background: {C_PANEL}; border: 1.5px solid {C_BORDER}; border-radius: 12px; }}")
-        self.lbl_title.setStyleSheet(f"font-weight: bold; font-size: 11px; letter-spacing: 2px; color: {C_PRI}; background: transparent; border:none;")
-        self.lbl_temp.setStyleSheet("font-size: 26px; font-weight: bold; color: white; background: transparent; border:none; margin-right: 10px;")
-        self.lbl_desc.setStyleSheet(f"font-size: 12px; color: {C_TEXT}; background: transparent; border:none;")
-
-class SpotifyWidget(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("SpotifyWidget")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 12, 15, 12)
-        
-        header = QHBoxLayout()
-        self.lbl_title = QLabel("SPOTIFY CONTROL")
-        header.addWidget(self.lbl_title)
-        header.addStretch()
-        layout.addLayout(header)
-        
-        self.lbl_track = QLabel("Not Playing")
-        self.lbl_artist = QLabel("Awaiting tracks...")
-        layout.addWidget(self.lbl_track)
-        layout.addWidget(self.lbl_artist)
-        
-        controls = QHBoxLayout()
-        self.btn_prev = QPushButton("⏮")
-        self.btn_play = QPushButton("▶")
-        self.btn_next = QPushButton("⏭")
-        
-        for btn in (self.btn_prev, self.btn_play, self.btn_next):
-            btn.setFixedSize(35, 35)
-            controls.addWidget(btn)
-        controls.addStretch()
-        layout.addLayout(controls)
-        
-        self.btn_play.clicked.connect(lambda: threading.Thread(target=self._press, args=("playpause",), daemon=True).start())
-        self.btn_next.clicked.connect(lambda: threading.Thread(target=self._press, args=("nexttrack",), daemon=True).start())
-        self.btn_prev.clicked.connect(lambda: threading.Thread(target=self._press, args=("prevtrack",), daemon=True).start())
-
-        self.update_style()
-        
-    def _press(self, key):
-        try:
-            import pyautogui
-            pyautogui.press(key)
-        except Exception as e:
-            print(f"[Spotify] Error de control local: {e}")
-
-    def update_style(self):
-        self.setStyleSheet(f"QWidget#SpotifyWidget {{ background: {C_PANEL}; border: 1.5px solid {C_BORDER}; border-radius: 12px; }}")
-        self.lbl_title.setStyleSheet(f"font-weight: bold; font-size: 11px; letter-spacing: 2px; color: {C_PRI}; background: transparent; border:none;")
-        self.lbl_track.setStyleSheet("font-size: 16px; font-weight: bold; color: white; background: transparent; border:none; margin-top: 5px;")
-        self.lbl_artist.setStyleSheet(f"font-size: 12px; color: {C_PRI_DIM}; background: transparent; border:none; margin-bottom: 5px;")
-        
-        btn_style = f"QPushButton {{ background: transparent; border: 1px solid {C_BORDER}; border-radius: 17px; color: {C_PRI}; font-size: 16px; }} QPushButton:hover {{ background: {C_PRI}; color: {C_BG}; border-color: {C_PRI}; }}"
-        self.btn_play.setStyleSheet(btn_style)
-        self.btn_next.setStyleSheet(btn_style)
-        self.btn_prev.setStyleSheet(btn_style)
-
-class SystemWidget(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("SystemWidget")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 12, 15, 12)
-        
-        header = QHBoxLayout()
-        self.lbl_title = QLabel("SYSTEM GAUGES")
-        header.addWidget(self.lbl_title)
-        header.addStretch()
-        layout.addLayout(header)
-        
-        self.cpu_bar = QProgressBar()
-        self.ram_bar = QProgressBar()
-        
-        self.lbl_cpu = QLabel("CPU Status")
-        layout.addWidget(self.lbl_cpu)
-        layout.addWidget(self.cpu_bar)
-        
-        self.lbl_ram = QLabel("RAM Status")
-        layout.addWidget(self.lbl_ram)
-        layout.addWidget(self.ram_bar)
-        
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_stats)
-        self.timer.start(1500) 
-        self.update_style()
-        
-    def update_stats(self):
-        try:
-            self.cpu_bar.setValue(int(psutil.cpu_percent()))
-            self.ram_bar.setValue(int(psutil.virtual_memory().percent))
-        except Exception:
-            pass
-
-    def update_style(self):
-        self.setStyleSheet(f"QWidget#SystemWidget {{ background: {C_PANEL}; border: 1.5px solid {C_BORDER}; border-radius: 12px; }}")
-        self.lbl_title.setStyleSheet(f"font-weight: bold; font-size: 11px; letter-spacing: 2px; color: {C_PRI}; border:none; background: transparent;")
-        lbl_style = f"font-size: 11px; color: {C_TEXT}; border: none; background: transparent; margin-top: 5px;"
-        self.lbl_cpu.setStyleSheet(lbl_style)
-        self.lbl_ram.setStyleSheet(lbl_style)
-        
-        bar_style = f"QProgressBar {{ border: 1px solid {C_BORDER}; border-radius: 6px; text-align: center; color: white; height: 16px; background: rgba(0,0,0,0.4); }} QProgressBar::chunk {{ background-color: {C_PRI}; border-radius: 5px; }}"
-        self.cpu_bar.setStyleSheet(bar_style)
-        self.ram_bar.setStyleSheet(bar_style)
-
-class TodoWidget(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("TodoWidget")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 12, 15, 12)
-        
-        self.lbl_title = QLabel("TODOS")
-        layout.addWidget(self.lbl_title)
-        
-        inp_layout = QHBoxLayout()
-        self.txt_task = QLineEdit()
-        self.txt_task.setPlaceholderText("New chore...")
-        self.btn_add = QPushButton("+")
-        self.btn_add.setFixedSize(30, 30)
-        inp_layout.addWidget(self.txt_task)
-        inp_layout.addWidget(self.btn_add)
-        layout.addLayout(inp_layout)
-        
-        self.lst_todo = QListWidget()
-        layout.addWidget(self.lst_todo)
-        
-        self.btn_add.clicked.connect(self.add_task)
-        self.txt_task.returnPressed.connect(self.add_task)
-        self.update_style()
-        
-    def add_task(self):
-        text = self.txt_task.text().strip()
-        if text:
-            item = QListWidgetItem(text)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Unchecked)
-            self.lst_todo.addItem(item)
-            self.txt_task.clear()
-
-    def update_style(self):
-        self.setStyleSheet(f"QWidget#TodoWidget {{ background: {C_PANEL}; border: 1.5px solid {C_BORDER}; border-radius: 12px; }}")
-        self.lbl_title.setStyleSheet(f"font-weight: bold; font-size: 11px; letter-spacing: 2px; color: {C_PRI}; border: none; background: transparent;")
-        self.txt_task.setStyleSheet(f"QLineEdit {{ background: rgba(0,0,0,0.5); border: 1px solid {C_BORDER}; border-radius: 6px; padding: 6px; color: white; }}")
-        self.btn_add.setStyleSheet(f"QPushButton {{ background: {C_PRI}; color: {C_BG}; font-weight: bold; border-radius: 6px; font-size: 18px; }}")
-        self.lst_todo.setStyleSheet("QListWidget { border: none; background: transparent; } QListWidget::item { color: white; margin-top: 5px; }")
-
-class NotesWidget(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("NotesWidget")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 12, 15, 12)
-        
-        self.lbl_title = QLabel("PAD NOTES")
-        layout.addWidget(self.lbl_title)
-        
-        self.txt_notes = QTextEdit()
-        self.txt_notes.setPlaceholderText("Write details...")
-        layout.addWidget(self.txt_notes)
-        self.update_style()
-
-    def update_style(self):
-        self.setStyleSheet(f"QWidget#NotesWidget {{ background: {C_PANEL}; border: 1.5px solid {C_BORDER}; border-radius: 12px; }}")
-        self.lbl_title.setStyleSheet(f"font-weight: bold; font-size: 11px; letter-spacing: 2px; color: {C_PRI}; border: none; background: transparent;")
-        self.txt_notes.setStyleSheet(f"QTextEdit {{ border: none; background: rgba(0,0,0,0.4); border-radius: 6px; padding: 8px; color: white; font-size: 13px; }}")
-
-class FilesPanel(QWidget):
-    def __init__(self, ui, parent=None):
-        super().__init__(parent)
-        self.ui = ui
-        self.setObjectName("FilesPanel")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 12, 15, 12)
-        
-        self.lbl_title = QLabel("FILES DROP")
-        layout.addWidget(self.lbl_title)
-        
-        self.drop_zone = QLabel("Drop File Trigger\n\n(Arrastra archivos aquí)")
-        self.drop_zone.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.drop_zone)
-        
-        self.update_style()
-
-    def update_style(self):
-        self.setStyleSheet(f"QWidget#FilesPanel {{ background: {C_PANEL}; border: 1.5px solid {C_BORDER}; border-radius: 12px; }}")
-        self.lbl_title.setStyleSheet(f"font-weight: bold; font-size: 11px; letter-spacing: 2px; color: {C_PRI}; border: none; background: transparent;")
-        self.drop_zone.setStyleSheet(f"QLabel {{ background: rgba(0,0,0,0.4); border: 2px dashed {C_BORDER}; border-radius: 8px; color: {C_TEXT}; font-weight: bold; padding: 15px; }}")
-
 class MainWindow(QMainWindow):
-    _shutdown_sig = pyqtSignal()
-
     def __init__(self, ui, face_path):
         super().__init__()
         self.ui = ui
         self.ui._win = self
         
-        self.resize(1150, 800)
-        self.setMinimumSize(1000, 750)
-        self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground) 
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.setStyleSheet("background-color: black;")
         
-        self.central_widget = QWidget(self)
-        self.central_widget.setObjectName("centralWidget")
-        self.setCentralWidget(self.central_widget)
+        self.orb = CustomParticleOrb(self.ui, self)
+        self.setCentralWidget(self.orb)
         
-        self.lbl_brand = QLabel("I . R . I . S", self.central_widget)
-        font = QFont("Century Gothic", 20, QFont.Weight.Bold)
-        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 10.0)
-        self.lbl_brand.setFont(font)
-        
-        self.btn_close = QPushButton("✖", self.central_widget)
-        self.btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_close.clicked.connect(self.close)
-        
-        self.btn_settings = QPushButton("⚙️", self.central_widget)
-        self.btn_settings.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_settings.clicked.connect(self._open_settings)
-        
-        self.btn_camera = QPushButton("🎥", self.central_widget)
-        self.btn_camera.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_camera.clicked.connect(self._toggle_camera)
-        
-        self.orb = CustomParticleOrb(self.ui, self.central_widget)
-        
-        self.bento_container = QWidget(self.central_widget)
-        bento_layout = QGridLayout(self.bento_container)
-        bento_layout.setContentsMargins(0, 0, 0, 0)
-        bento_layout.setSpacing(15)
-        
-        self.spotify_w = SpotifyWidget()
-        self.weather_w = WeatherWidget()
-        self.system_w = SystemWidget()
-        self.todo_w = TodoWidget()
-        self.notes_w = NotesWidget()
-        self.files_panel = FilesPanel(self.ui)
-        
-        bento_layout.addWidget(self.spotify_w, 0, 0, 1, 2)
-        bento_layout.addWidget(self.weather_w, 0, 2, 1, 1)
-        bento_layout.addWidget(self.system_w, 0, 3, 1, 1)
-        bento_layout.addWidget(self.todo_w, 1, 0, 1, 1)
-        bento_layout.addWidget(self.notes_w, 1, 1, 1, 2)
-        bento_layout.addWidget(self.files_panel, 1, 3, 1, 1)
-        
-        bento_layout.setColumnStretch(0, 1)
-        bento_layout.setColumnStretch(1, 1)
-        bento_layout.setColumnStretch(2, 1)
-        bento_layout.setColumnStretch(3, 1)
-        
-        self.clock_w = ClockWidget(self.central_widget)
-        
-        self.txt_console = QLabel(self.central_widget)
-        self.txt_console.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        self.update_theme_styles()
-        self._drag_pos = None
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.tick)
+        self.timer.start(1000)
+        self.tick()
 
-    # 🟢 LA ORDEN QUE ESCUCHA CUANDO GUARDAS EL TEMA
+    def tick(self):
+        try:
+            now = datetime.now(_BA_TZ)
+            time_str = now.strftime("%I:%M:%S %p")
+            date_str = now.strftime("%A, %d %B %Y").upper()
+            js_code = f"if (window.updateClock) window.updateClock('{time_str}', '{date_str}');"
+            self.orb.web_view.page().runJavaScript(js_code)
+        except Exception:
+            pass
+
     def apply_new_theme(self, theme_name):
-        set_global_theme(theme_name) # Cambiamos las variables globales
-        
-        # Le decimos a TODAS las cajas que se repinten
-        self.update_theme_styles()
-        self.clock_w.update_style()
-        self.weather_w.update_style()
-        self.spotify_w.update_style()
-        self.system_w.update_style()
-        self.todo_w.update_style()
-        self.notes_w.update_style()
-        self.files_panel.update_style()
-        
-        # Le decimos a la esfera 3D que actualice sus colores
+        set_global_theme(theme_name)
         self.orb._safe_sync_theme()
-
-    def update_theme_styles(self):
-        self.central_widget.setStyleSheet(f"QWidget#centralWidget {{ background-color: {C_BG}; border: 2.2px solid {C_PRI}; border-radius: 20px; }}")
-        self.lbl_brand.setStyleSheet(f"color: {C_PRI}; background: transparent; border: none;")
-        
-        btn_style = f"QPushButton {{ color: {C_PRI}; background: transparent; border: 1px solid {C_BORDER}; border-radius: 15px; font-size: 16px; font-weight: bold; }} QPushButton:hover {{ background: {C_PRI}; color: {C_BG}; border-color: {C_PRI}; }}"
-        self.btn_close.setStyleSheet(btn_style)
-        self.btn_settings.setStyleSheet(btn_style)
-        self.btn_camera.setStyleSheet(btn_style)
-        
-        self.txt_console.setStyleSheet(f"QLabel {{ color: {C_PRI}; font-weight: bold; font-size: 16px; background: transparent; }}")
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        W, H = self.central_widget.width(), self.central_widget.height()
-        
-        self.lbl_brand.setGeometry(25, 20, 250, 40)
-        self.btn_close.setGeometry(W - 55, 20, 30, 30)
-        
-        self.btn_settings.setGeometry(W - 95, 20, 30, 30)
-        self.btn_camera.setGeometry(W - 135, 20, 30, 30)
-        
-        self.clock_w.setGeometry(W - 280, 70, 250, 80)
-        self.orb.setGeometry(0, 50, W, H - 50)
-        self.txt_console.setGeometry(30, H - 50, W - 60, 40)
-        
-        bh = H // 2 - 20 
-        self.bento_container.setGeometry(25, H - bh - 60, W - 50, bh)
-        
-        self.bento_container.raise_()
-        self.txt_console.raise_()
-        self.clock_w.raise_()
 
     def _open_settings(self):
         dialog = DeviceSettingsDialog(self)
         dialog.exec()
-
-    def _toggle_camera(self):
-        if not hasattr(self, 'camera_window') or self.camera_window is None:
-            self.camera_window = CameraPreviewWindow(parent=None)
-            self.camera_window.show()
-            self.camera_window.move(50, 50)
-        else:
-            if self.camera_window.isVisible():
-                self.camera_window.hide()
-            else:
-                self.camera_window.show()
-                self.camera_window.raise_()
-
-    def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-
-    def mouseMoveEvent(self, event: QMouseEvent):
-        if self._drag_pos and event.buttons() == Qt.MouseButton.LeftButton:
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
 
 class MockRoot:
     def __init__(self, qapp: QApplication): self.qapp = qapp
@@ -540,7 +174,6 @@ class Comunicador(QObject):
 
 class JarvisUI:
     def __init__(self, face_path=""):
-        # 🟢 LEEMOS EL TEMA GUARDADO ANTES DE ABRIR LA VENTANA
         try:
             cfg = load_api_keys()
             saved_theme = cfg.get("jarvis_theme", "green")
@@ -558,23 +191,21 @@ class JarvisUI:
         self.puente.senal_log.connect(self.write_log)
         self.puente.senal_transcripcion.connect(self.escribir_holograma)
         
-        self._win.show()
+        # 🟢 MAGIA: Forzamos la apertura en Pantalla Completa Absoluta
+        self._win.showFullScreen()
         
     def set_state(self, state_text):
         if "EN LÍNEA" in state_text:
             self._win.orb.set_state("LISTENING")
             
     def write_log(self, text):
-        self._win.txt_console.setText(text)
+        js_code = f"if (window.updateConsole) window.updateConsole({json.dumps(text)});"
+        self._win.orb.web_view.page().runJavaScript(js_code)
 
     def escribir_holograma(self, text):
-        self._win.txt_console.setText(text)
-
-    def clear_jarvis_response(self):
-        self._win.txt_console.setText("")
-
-    def stream_jarvis_chunk(self, chunk: str):
-        self._win.txt_console.setText(chunk.replace("JARVIS:", "").replace("IRIS:", "").strip())
+        clean_text = text.replace("IRIS:", "").replace("JARVIS:", "").strip()
+        js_code = f"if (window.updateConsole) window.updateConsole({json.dumps(clean_text)});"
+        self._win.orb.web_view.page().runJavaScript(js_code)
 
 if __name__ == "__main__":
     ui = JarvisUI()

@@ -1,821 +1,2066 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
+
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JARVIS Neural Core</title>
-    <!-- Material Symbols & Sora Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Sora:wght@600;700;800&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+    <title>Holograma I.R.I.S. HUD</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600&display=swap');
+
+        /* 🟢 VARIABLES CSS QUE PYTHON ACTUALIZARÁ DINÁMICAMENTE */
         :root {
-            --primary-fixed: #f59e0b;
-            --primary-fixed-dim: #78350f;
-            --primary-glow: rgba(245, 158, 11, 0.3);
-            --primary-ring-1-bg: rgba(245, 158, 11, 0.2);
-            --primary-ring-2-bg: rgba(245, 158, 11, 0.15);
-            --energy-level: 1.0;
-            --glow-intensity: 0.6;
+            --pri: #00FF00;
+            --pri-dim: #00CC00;
+            --text: #FFFFFF;
+            --border: rgba(0, 255, 0, 0.45);
         }
 
-        /* Essential Utility Classes replacing Tailwind (saves ~100MB of RAM) */
-        .flex { display: flex; }
-        .flex-col { flex-direction: column; }
-        .items-start { align-items: flex-start; }
-        .items-center { align-items: center; }
-        .justify-center { justify-content: center; }
-        .relative { position: relative; }
-        .absolute { position: absolute; }
-        .font-mono { font-family: 'JetBrains Mono', Consolas, Monaco, 'Courier New', monospace; }
-        .font-bold { font-weight: bold; }
-        .opacity-50 { opacity: 0.5; }
-        .text-\[8px\] { font-size: 8px; }
-        .text-sm { font-size: 12px; }
-        .text-2xl { font-size: 24px; }
-        .tracking-widest { letter-spacing: 0.15em; }
-        .mt-0\.5 { margin-top: 2px; }
-        .px-2 { padding-left: 8px; padding-right: 8px; }
-        .py-2 { padding-top: 8px; padding-bottom: 8px; }
-        .w-\[74px\] { width: 74px; }
-        .h-\[74px\] { height: 74px; }
-        .w-\[96px\] { width: 96px; }
-        .h-\[96px\] { height: 96px; }
-        .w-\[78px\] { width: 78px; }
-        .h-\[78px\] { height: 78px; }
-        .rounded-full { border-radius: 9999px; }
-        .bg-\[var\(--primary-fixed\)\]\/20 { background-color: var(--primary-ring-1-bg); }
-        .bg-\[var\(--primary-fixed\)\]\/15 { background-color: var(--primary-ring-2-bg); }
-
-        body {
+        * {
             margin: 0;
             padding: 0;
-            background: transparent;
+            box-sizing: border-box;
+        }
+
+        body {
             overflow: hidden;
-            font-family: 'JetBrains Mono', Consolas, Monaco, 'Courier New', monospace;
-            user-select: none;
+            background: #000000; /* 🟢 FONDO NEGRO SÓLIDO */
+            font-family: 'Montserrat', sans-serif;
+            color: rgba(255, 255, 255, 0.9);
+            cursor: move; 
         }
 
-        #neural-core-container {
-            width: 100vw;
-            height: 100vh;
-            position: relative;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        #orb-wrapper {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 48%; /* Centers the orb mathematically in the empty upper space above Bento Grid */
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 10;
-        }
-
-        #sphere-canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
+        canvas {
+            display: block;
             width: 100%;
             height: 100%;
-            z-index: 10;
-            cursor: pointer;
-            filter: drop-shadow(0 0 35px var(--primary-glow));
-            transition: transform 0.1s ease-out;
-        }
-
-        /* Ambient glowing halos — centered exactly on orb */
-        .ambient-glow {
             position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 75%;
-            height: 75%;
-            transform: translate(-50%, -50%);
-            background: radial-gradient(circle, rgba(245, 158, 11, 0.22) 0%, transparent 70%);
-            border-radius: 50%;
-            pointer-events: none;
-            mix-blend-mode: screen;
+            top: 0; 
+            left: 0;
             z-index: 1;
-            transition: transform 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94), background 0.25s ease, width 0.25s ease, height 0.25s ease;
         }
 
-        .ripple {
+        /* 🟢 ESTILOS DEL NUEVO HUD FLOTANTE (IRON MAN) */
+        #hud-layer {
             position: absolute;
-            border: 1px solid var(--primary-fixed);
-            border-radius: 50%;
-            pointer-events: none;
-            animation: ripple-out 1.5s cubic-bezier(0.165, 0.84, 0.44, 1) forwards;
-            z-index: 5;
+            top: 0; 
+            left: 0;
+            width: 100%; 
+            height: 100%;
+            z-index: 1000;
+            pointer-events: none; /* Permite que el ratón interactúe con el fondo 3D */
         }
 
-        @keyframes ripple-out {
-            0% { width: 0; height: 0; opacity: 1; transform: scale(1); }
-            100% { width: 100vw; height: 100vw; opacity: 0; border-width: 0px; transform: scale(1.5); }
+        .no-drag { 
+            pointer-events: auto; 
+            cursor: default; 
         }
 
-        .data-particle {
+        .hud-brand {
             position: absolute;
-            background: var(--primary-fixed);
-            width: 3px;
-            height: 3px;
-            border-radius: 50%;
-            pointer-events: none;
-            filter: blur(0.5px);
-            box-shadow: 0 0 6px var(--primary-fixed);
-            z-index: 15;
+            top: 30px; 
+            left: 40px;
+            font-family: 'Consolas', monospace;
+            font-size: 26px;
+            font-weight: bold;
+            letter-spacing: 12px;
+            color: var(--pri);
+            text-shadow: 0 0 10px var(--border);
         }
 
-        /* Active / Synaptic load stats overlays */
-        #synaptic-stats {
+        .hud-controls {
             position: absolute;
-            top: 25px;
-            left: 25px;
-            z-index: 100;
+            top: 30px; 
+            right: 40px;
+            display: flex;
+            gap: 12px;
+        }
+
+        .hud-btn {
+            width: 32px; 
+            height: 32px;
+            border-radius: 16px;
+            background: rgba(0,0,0,0.5);
+            border: 1.5px solid var(--border);
+            color: var(--pri);
+            font-weight: bold;
+            font-size: 15px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex; 
+            justify-content: center; 
+            align-items: center;
+        }
+
+        .hud-btn:hover {
+            background: var(--pri);
+            color: black;
+            box-shadow: 0 0 15px var(--pri);
+        }
+
+        .hud-clock {
+            position: absolute;
+            top: 85px; 
+            right: 40px;
+            text-align: right;
+            text-shadow: 0 0 8px rgba(0,0,0,0.8);
+        }
+
+        #clock-time {
+            font-family: 'Consolas', monospace;
+            font-size: 34px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            color: white;
+        }
+
+        #clock-date {
+            font-size: 14px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            color: var(--pri);
+            margin-top: -5px;
+        }
+
+        .hud-dialog {
+            position: absolute;
+            bottom: 40px; 
+            right: 40px;
+            width: 480px; 
+            height: 180px;
+            background: rgba(0, 0, 0, 0.75);
+            border: 1.5px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
             display: flex;
             flex-direction: column;
-            gap: 15px;
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.15em;
-            color: var(--primary-fixed);
-            opacity: 0.75;
-            pointer-events: none;
-            text-shadow: 0 0 8px var(--primary-glow);
+            backdrop-filter: blur(5px);
         }
 
-        /* Bottom Capsule Mic Control Bar (Replacing horizontal write bar!) */
-        #bottom-mic-panel {
-            display: none !important; /* Completely removed from interface as requested */
-        }
-
-        .mic-capsule {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            background: var(--capsule-bg, rgba(5, 20, 36, 0.85));
-            padding: 8px 24px;
-            border-radius: 9999px;
-            border: 1px solid rgba(0, 212, 255, 0.25);
-            pointer-events: auto;
-            box-shadow: 0 0 35px var(--primary-glow), inset 0 0 15px rgba(0, 212, 255, 0.05);
-            backdrop-filter: blur(16px);
-            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        .mic-label {
-            font-family: 'Sora', sans-serif;
+        .dialog-title {
             font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.25em;
-            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-            cursor: pointer;
-            opacity: 0.35;
+            font-weight: bold;
+            letter-spacing: 2px;
+            color: var(--pri);
+            margin-bottom: 15px;
         }
 
-        .mic-label:hover {
-            opacity: 0.85;
+        #console-text {
+            font-family: 'Consolas', monospace;
+            font-size: 16px;
+            line-height: 1.5;
+            color: var(--text);
+            flex-grow: 1;
+            overflow-y: auto;
+        }
+        /* 🟢 FIN DE ESTILOS DEL HUD */
+
+        .glassmorphic {
+            background: rgba(10, 20, 35, 0.15);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 8px 32px 0 rgba(0, 10, 30, 0.15);
+            border-radius: 16px;
+            
         }
 
-        .mic-halo {
-            position: absolute;
-            border-radius: 50%;
-            pointer-events: none;
-            border: 1px solid var(--primary-fixed);
-            opacity: 0;
-            transition: all 0.5s ease;
+        .controls {
+            position: fixed;
+            bottom: 30px;
+            left: 30px;
+            padding: 22px 28px;
+            z-index: 100;
+            opacity: 0.92;
+            transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
+            max-width: 350px;
+            transform: translateY(0);
+            
         }
 
-        @keyframes pulse-ring {
-            0% { transform: scale(0.7); opacity: 0; }
-            50% { opacity: 0.45; }
-            100% { transform: scale(1.35); opacity: 0; }
+        .controls:hover {
+            opacity: 1;
+            box-shadow: 0 12px 40px 0 rgba(30, 100, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transform: translateY(-5px);
         }
 
-        .pulsing-ring-1 {
-            animation: pulse-ring 2.2s ease-out infinite;
-        }
-        .pulsing-ring-2 {
-            animation: pulse-ring 3.2s ease-out infinite 0.8s;
-        }
-
-        #mic-trigger {
-            position: relative;
-            z-index: 60;
-            width: 58px;
-            height: 58px;
-            border-radius: 50%;
-            background: radial-gradient(circle, rgba(14, 28, 45, 0.95) 0%, rgba(8, 16, 26, 0.95) 100%);
-            border: 1px solid var(--primary-fixed);
-            color: var(--primary-fixed);
+        .controls h3 {
+            font-weight: 500;
+            margin-bottom: 18px;
+            font-size: 16px;
+            letter-spacing: 1px;
+            color: rgba(255, 255, 255, 0.95);
+            text-shadow: 0 0 15px rgba(30, 150, 255, 0.6);
             display: flex;
             align-items: center;
-            justify-content: center;
-            box-shadow: 0 0 20px var(--primary-glow);
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .controls h3::before {
+            content: "";
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            margin-right: 10px;
+            background: radial-gradient(circle, rgba(100, 180, 255, 0.9) 0%, rgba(30, 120, 255, 0.4) 70%);
+            border-radius: 50%;
+            box-shadow: 0 0 10px rgba(30, 150, 255, 0.7);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(30, 150, 255, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(30, 150, 255, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(30, 150, 255, 0); }
+        }
+
+        .slider-container {
+            margin: 14px 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .slider-container label {
+            margin-bottom: 8px;
+            font-size: 13px;
+            font-weight: 400;
+            color: rgba(180, 210, 255, 0.9);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .slider-container label span {
+            font-size: 12px;
+            color: rgba(100, 180, 255, 0.8);
+            font-weight: 600;
+            padding: 3px 8px;
+            background-color: rgba(30, 80, 150, 0.15);
+            border-radius: 12px;
+            transition: all 0.3s ease;
+        }
+
+        .slider-container:hover label span {
+            background-color: rgba(30, 100, 180, 0.25);
+            color: rgba(150, 200, 255, 0.9);
+        }
+
+        .slider {
+            width: 100%;
+            height: 6px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: linear-gradient(to right, rgba(20, 60, 120, 0.4), rgba(40, 100, 180, 0.5));
+            outline: none;
+            border-radius: 6px;
+            transition: all 0.3s;
             cursor: pointer;
         }
 
-        #mic-trigger:hover {
-            background: var(--primary-fixed);
-            color: #051424;
-            box-shadow: 0 0 30px var(--primary-fixed);
-            transform: scale(1.08);
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, rgba(60, 140, 255, 0.9), rgba(30, 100, 200, 0.8));
+            cursor: pointer;
+            box-shadow: 0 0 15px rgba(30, 150, 255, 0.7), inset 0 0 3px rgba(255, 255, 255, 0.5);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            transition: all 0.2s;
         }
 
-        #mic-trigger:active {
-            transform: scale(0.94);
+        .slider::-webkit-slider-thumb:hover {
+            background: linear-gradient(135deg, rgba(80, 160, 255, 0.95), rgba(40, 120, 220, 0.85));
+            box-shadow: 0 0 20px rgba(50, 180, 255, 0.9);
+            transform: scale(1.1);
         }
 
-        #mic-trigger.muted {
-            border-color: #ff3355;
-            color: #ff3355;
-            box-shadow: 0 0 20px rgba(255, 51, 85, 0.4);
-            background: radial-gradient(circle, rgba(40, 10, 15, 0.95) 0%, rgba(20, 5, 8, 0.95) 100%);
+        .slider::-webkit-slider-runnable-track {
+            height: 6px;
+            border-radius: 6px;
+            transition: all 0.3s;
         }
 
-        #mic-trigger.muted:hover {
-            background: #ff3355;
-            color: #ffffff;
-            box-shadow: 0 0 28px #ff3355;
+        .slider:hover::-webkit-slider-runnable-track {
+            background: linear-gradient(to right, rgba(30, 80, 140, 0.5), rgba(50, 120, 200, 0.6));
+        }
+
+        .info {
+            position: fixed;
+            bottom: 25px;
+            right: 25px;
+            font-size: 12px;
+            color: rgba(180, 210, 255, 0.6);
+            text-shadow: 0 0 8px rgba(30, 100, 255, 0.4);
+            z-index: 100;
+            background: rgba(10, 20, 40, 0.2);
+            padding: 8px 15px;
+            border-radius: 20px;
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: all 0.3s ease;
+            
+        }
+
+        .info:hover {
+            color: rgba(200, 230, 255, 0.8);
+            background: rgba(20, 40, 80, 0.3);
+            transform: translateY(-3px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+
+        @keyframes floatElement {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+            100% { transform: translateY(0px); }
+        }
+
+        @keyframes glowPulse {
+            0% { box-shadow: 0 0 5px rgba(30, 150, 255, 0.3); }
+            50% { box-shadow: 0 0 20px rgba(30, 150, 255, 0.7); }
+            100% { box-shadow: 0 0 5px rgba(30, 150, 255, 0.3); }
         }
     </style>
+    
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/EffectComposer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+    
+    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 </head>
+
 <body>
-    <div id="neural-core-container">
-        <!-- Orb Wrapper for centering the sphere in the upper half of the window -->
-        <div id="orb-wrapper">
-            <!-- Central Neural Sphere -->
-            <canvas id="sphere-canvas"></canvas>
-            <!-- Ambient Halo — rendered AFTER canvas so z-index:1 sits behind canvas z-index:10 -->
-            <div class="ambient-glow" id="ambient-halo"></div>
-        </div>
+    <div id="container"></div>
 
-        <!-- Left Synaptic Stats Overlay -->
-        <div id="synaptic-stats" class="font-mono">
-            <div class="flex flex-col items-start">
-                <span class="opacity-50 text-[8px] tracking-widest">Core Sync</span>
-                <span id="stat-sync" class="font-bold text-sm mt-0.5">99.2%</span>
-            </div>
-            <div class="flex flex-col items-start">
-                <span class="opacity-50 text-[8px] tracking-widest">Synaptic Load</span>
-                <span id="stat-load" class="font-bold text-sm mt-0.5">8 ms</span>
-            </div>
+    <div id="hud-layer">
+        <div class="hud-brand">I . R . I . S</div>
+        
+        <div class="hud-controls no-drag">
+            <button class="hud-btn" onclick="if(window.pyBridge) window.pyBridge.open_settings()">⚙️</button>
+            <button class="hud-btn" onclick="if(window.pyBridge) window.pyBridge.minimize_app()">—</button>
+            <button class="hud-btn" onclick="if(window.pyBridge) window.pyBridge.close_app()">✖</button>
         </div>
-
-        <!-- Bottom Capsule Mic Control Bar (Replacing horizontal write bar!) -->
-        <div id="bottom-mic-panel">
-            <div class="mic-capsule" id="mic-capsule-border">
-                <!-- MIC ON Label -->
-                <button id="lbl-mic-on" onclick="setMuteFromWeb(false)" class="mic-label px-2 py-2 text-[var(--primary-fixed)]">
-                    Mic On
-                </button>
-                
-                <!-- Circular Pulse Trigger -->
-                <div class="relative flex items-center justify-center w-[74px] h-[74px]">
-                    <div class="absolute w-[96px] h-[96px] bg-[var(--primary-fixed)]/20 rounded-full mic-halo pulsing-ring-1" id="ring-1"></div>
-                    <div class="absolute w-[78px] h-[78px] bg-[var(--primary-fixed)]/15 rounded-full mic-halo pulsing-ring-2" id="ring-2"></div>
-                    <button id="mic-trigger" onclick="onMicTriggerClick()">
-                        <span class="material-symbols-outlined text-2xl" style="font-variation-settings: 'FILL' 1;" id="mic-icon">mic</span>
-                    </button>
-                </div>
-                
-                <!-- MIC MUTED Label -->
-                <button id="lbl-mic-muted" onclick="setMuteFromWeb(true)" class="mic-label px-2 py-2 text-[#ff3355]">
-                    Mic Muted
-                </button>
-            </div>
+        
+        <div class="hud-clock">
+            <div id="clock-time">12:00:00 AM</div>
+            <div id="clock-date">CARGANDO FECHA...</div>
+        </div>
+        
+        <div class="hud-dialog no-drag">
+            <div class="dialog-title">INCOMING TRANSMISSION</div>
+            <div id="console-text">Esperando inicialización del sistema...</div>
         </div>
     </div>
 
-    <!-- Qt WebChannel Bridging -->
-    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
-    <script>
-        // QWebChannel Interop
-        let pyBridge = null;
-        try {
-            new QWebChannel(qt.webChannelTransport, function (channel) {
-                pyBridge = channel.objects.pyBridge;
-                console.log("Qt WebChannel connected!");
-                // Proactively request theme colors from Python once QWebChannel is ready
-                if (pyBridge && pyBridge.request_theme) {
-                    pyBridge.request_theme();
-                }
-            });
-        } catch (e) {
-            console.log("Not in Qt WebEngine environment, running standalone.");
-        }
+    <div class="controls glassmorphic">
+        <h3>Electric Controls</h3>
+        <div class="slider-container">
+            <label>Electric Intensity <span id="electric-value">70%</span></label>
+            <input type="range" class="slider" id="electricIntensity" min="0" max="100" value="70">
+        </div>
+        <div class="slider-container">
+            <label>Arc Frequency <span id="arc-value">65%</span></label>
+            <input type="range" class="slider" id="arcFrequency" min="0" max="100" value="65">
+        </div>
+        <div class="slider-container">
+            <label>Glow Strength <span id="glow-value">60%</span></label>
+            <input type="range" class="slider" id="glowStrength" min="0" max="100" value="60">
+        </div>
+    </div>
 
-        const root = document.documentElement;
-        const canvas = document.getElementById('sphere-canvas');
-        const ctx = canvas.getContext('2d');
-        const coreContainer = document.getElementById('neural-core-container');
-        const orbWrapper = document.getElementById('orb-wrapper');
-        const micBtn = document.getElementById('mic-trigger');
-        const micIcon = document.getElementById('mic-icon');
-        const ring1 = document.getElementById('ring-1');
-        const ring2 = document.getElementById('ring-2');
-        const lblOn = document.getElementById('lbl-mic-on');
-        const lblMuted = document.getElementById('lbl-mic-muted');
-        const capsuleBorder = document.getElementById('mic-capsule-border');
+    <div class="info">Click or touch for intense lightning discharge</div>
+    
+    <script type="text/javascript">
+        // 🟢 PUENTE JS -> PYTHON PARA ARRASTRAR Y COMUNICAR
+        window.pyBridge = null;
+        new QWebChannel(qt.webChannelTransport, function (channel) {
+            window.pyBridge = channel.objects.pyBridge;
+            if (window.pyBridge && window.pyBridge.request_theme) window.pyBridge.request_theme();
+        });
 
-        let isMuted = false;
-        let baseIntensity = 1.0;
-        let width, height;
-        let rotationX = 0;
-        let rotationY = 0;
-        let currentState = "LISTENING"; // LISTENING, THINKING, SPEAKING, MUTED
+        let isDragging = false;
+        let lastX = 0, lastY = 0;
+        
+        document.body.addEventListener('mousedown', (e) => {
+            if(e.target.closest('.no-drag') || e.target.closest('.slider')) return; 
+            isDragging = true;
+            lastX = e.screenX; lastY = e.screenY;
+        });
+        
+        window.addEventListener('mousemove', (e) => {
+            if(isDragging && window.pyBridge) {
+                let dx = e.screenX - lastX;
+                let dy = e.screenY - lastY;
+                lastX = e.screenX; lastY = e.screenY;
+                if(dx !== 0 || dy !== 0) window.pyBridge.move_window(dx, dy);
+            }
+        });
+        
+        window.addEventListener('mouseup', () => { isDragging = false; });
+
+        // 🟢 NERVIOS I.R.I.S. (Funciones llamadas por Python)
+        let targetVolume = 0.0;
         let currentVolume = 0.0;
-        let themeColors = {
-            PRI: '#f59e0b',
-            PRI_DIM: '#78350f',
-            TEXT: '#fde68a',
-            BG: '#0c0a00'
+        let baseRotationSpeed = 1.0;
+
+        window.updateVolume = function(level) { targetVolume = level * 2.5; };
+        
+        window.updateState = function(state) {
+            baseRotationSpeed = (state === "LISTENING") ? 3.5 : 1.0;
         };
 
-        let activeQuality = 80;
-        let lastFrameTime = 0;
-        let targetNodeCount = 90;
-        let sphereRadius = 180;
-        let rawSphereRadius = 180;
-        const nodes = [];
+        window.updateClock = function(timeStr, dateStr) {
+            document.getElementById('clock-time').innerText = timeStr;
+            document.getElementById('clock-date').innerText = dateStr;
+        };
 
-        window.updatePerformance = function(quality) {
-            activeQuality = parseInt(quality) || 80;
-            if (activeQuality < 1) activeQuality = 1;
-            if (activeQuality > 100) activeQuality = 100;
+        window.updateConsole = function(text) {
+            document.getElementById('console-text').innerText = text;
+            const consoleDiv = document.getElementById('console-text');
+            consoleDiv.scrollTop = consoleDiv.scrollHeight;
+        };
+
+        window.setThemeColors = function(newColors) {
+            document.documentElement.style.setProperty('--pri', newColors.PRI);
+            document.documentElement.style.setProperty('--pri-dim', newColors.PRI_DIM);
+            document.documentElement.style.setProperty('--text', newColors.TEXT);
+            document.documentElement.style.setProperty('--border', newColors.BORDER);
+
+            let pri = new THREE.Color(newColors.PRI);
+            let dim = new THREE.Color(newColors.PRI_DIM);
             
-            // Nodes scale from 8 to 110 based on performance slider
-            targetNodeCount = Math.round(8 + (activeQuality / 100) * 102);
-            
-            // Re-fill or shrink nodes list dynamically
-            if (nodes.length !== targetNodeCount) {
-                if (nodes.length < targetNodeCount) {
-                    while (nodes.length < targetNodeCount) {
-                        nodes.push(new Node());
+            colors.deepColor = new THREE.Color(0x000000);
+            colors.baseColor = dim;
+            colors.mainColor = pri;
+            colors.accentColor = pri.clone().lerp(new THREE.Color(0xffffff), 0.5);
+            colors.highlightColor = new THREE.Color(0xffffff);
+
+            if (typeof electricMaterial !== 'undefined' && electricMaterial.uniforms) {
+                electricMaterial.uniforms.themeColors.value = [
+                    colors.deepColor, colors.baseColor, colors.mainColor, colors.accentColor, colors.highlightColor
+                ];
+            }
+        };
+
+        // =========================================================================
+        // TU CÓDIGO 3D INTACTO DESDE AQUÍ
+        // =========================================================================
+        
+        const colors = {
+            deepColor: new THREE.Color(0x01071f),
+            baseColor: new THREE.Color(0x0a2550),
+            mainColor: new THREE.Color(0x1a65ff),
+            accentColor: new THREE.Color(0x66ccff),
+            highlightColor: new THREE.Color(0xaaddff)
+        };
+
+        const scene = new THREE.Scene();
+        // 🟢 CÁMARA ALEJADA A Z=16 PARA HACER LA ESFERA MÁS PEQUEÑA
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+        const renderer = new THREE.WebGLRenderer({
+            antialias: true,
+            alpha: false, // 🟢 FONDO OPACO
+            powerPreference: 'high-performance'
+        });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        
+        // 🟢 FONDO NEGRO ABSOLUTO SÓLIDO
+        renderer.setClearColor(0x000000, 1.0); 
+        document.getElementById('container').appendChild(renderer.domElement);
+
+        const settings = {
+            electricIntensity: 0.7,
+            arcFrequency: 0.65,
+            glowStrength: 0.6,
+            enableLightning: true,
+            enableChainLightning: true
+        };
+
+        function updateSliderValues() {
+            document.getElementById('electric-value').textContent = `${Math.round(settings.electricIntensity * 100)}%`;
+            document.getElementById('arc-value').textContent = `${Math.round(settings.arcFrequency * 100)}%`;
+            document.getElementById('glow-value').textContent = `${Math.round(settings.glowStrength * 100)}%`;
+        }
+
+        document.getElementById('electricIntensity').addEventListener('input', function () {
+            settings.electricIntensity = this.value / 100;
+            updateSliderValues();
+        });
+
+        document.getElementById('arcFrequency').addEventListener('input', function () {
+            settings.arcFrequency = this.value / 100;
+            updateSliderValues();
+        });
+
+        document.getElementById('glowStrength').addEventListener('input', function () {
+            settings.glowStrength = this.value / 100;
+            updateSliderValues();
+            bloomPass.strength = 0.7 + settings.glowStrength * 0.8;
+        });
+
+        const mouse = new THREE.Vector2();
+        const targetRotation = new THREE.Vector2();
+        const currentRotation = new THREE.Vector2();
+        let mouseSpeed = new THREE.Vector2();
+        let lastMousePosition = new THREE.Vector2();
+        let mouseInfluence = 0;
+
+        const noiseHelperFunctions = `
+  float hash(float n) {
+    return fract(sin(n) * 43758.5453);
+  }
+  
+  float hash3D(vec3 p) {
+    p  = fract(p * 0.3183099 + 0.1);
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+  }
+  
+  float noise(vec3 x) {
+    vec3 p = floor(x);
+    vec3 f = fract(x);
+    f = f * f * (3.0 - 2.0 * f);
+    
+    float n = p.x + p.y * 57.0 + p.z * 113.0;
+    float res = mix(mix(mix(hash(n), hash(n + 1.0), f.x),
+                        mix(hash(n + 57.0), hash(n + 58.0), f.x), f.y),
+                    mix(mix(hash(n + 113.0), hash(n + 114.0), f.x),
+                        mix(hash(n + 170.0), hash(n + 171.0), f.x), f.y), f.z);
+    return res;
+  }
+  
+  float fbm(vec3 p) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
+    
+    for (int i = 0; i < 5; i++) {
+      value += amplitude * noise(p * frequency);
+      frequency *= 2.0;
+      amplitude *= 0.5;
+    }
+    
+    return value;
+  }
+  
+  float fbm_improved(vec3 p) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
+    
+    vec3 warp = vec3(
+        fbm(p + vec3(0.0, 23.4, 12.7)),
+        fbm(p + vec3(41.2, 0.0, 89.3)),
+        fbm(p + vec3(16.8, 33.5, 0.0))
+    ) * 0.3;
+    
+    p += warp;
+    
+    for (int i = 0; i < 5; i++) {
+      value += amplitude * noise(p * frequency);
+      frequency *= 2.1;
+      amplitude *= 0.5;
+      
+      p = vec3(
+        p.y + p.z, 
+        p.z - p.x, 
+        p.x + p.y
+      ) * 0.7;
+    }
+    
+    return value;
+  }
+  
+  float voronoi(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    
+    float minDist = 1.0;
+    
+    for (int x = -1; x <= 1; x++) {
+      for (int y = -1; y <= 1; y++) {
+        for (int z = -1; z <= 1; z++) {
+          vec3 neighbor = vec3(float(x), float(y), float(z));
+          vec3 point = neighbor + hash3D(i + neighbor) - f;
+          float dist = length(point);
+          minDist = min(minDist, dist);
+        }
+      }
+    }
+    
+    return minDist;
+  }
+`;
+
+        const electricVertexShader = `
+  uniform float time;
+  uniform vec2 mouse;
+  uniform float mouseInfluence;
+  uniform float electricIntensity;
+  uniform float arcFrequency;
+  uniform vec3 themeColors[5]; 
+  
+  varying vec3 vPosition;
+  varying vec3 vNormal;
+  varying float vIntensity;
+  varying float vDistFromMouse;
+  varying vec2 vUv;
+  
+  ${noiseHelperFunctions}
+  
+  void main() {
+    vec3 pos = position;
+    vNormal = normal;
+    vUv = uv;
+    
+    float wave = sin(position.x * 2.0 + time * 1.5) * cos(position.y * 2.0 + time * 1.2) * sin(position.z * 2.0 + time) * 0.4 +
+                 sin(position.x * 3.0 - time * 1.6) * cos(position.y * 3.0 - time * 1.3) * sin(position.z * 3.0 - time * 0.9) * 0.3;
+    
+    wave += sin(position.x * 8.0 + time * 3.0) * cos(position.y * 7.0 + time * 2.5) * sin(position.z * 9.0 + time * 3.5) * 0.1;
+    
+    wave += fbm_improved(vec3(
+      position.x * 2.5 + time * 0.7,
+      position.y * 2.5 - time * 0.8, 
+      position.z * 2.5 + time * 0.6
+    )) * 0.15;
+    
+    float arcNoise = fbm(vec3(
+      position.x * 5.0 + time * 3.0, 
+      position.y * 5.0 + time * 2.0, 
+      position.z * 5.0 + time * 4.0
+    ));
+    
+    float voronoiPattern = voronoi(vec3(
+      position.x * 4.0 + time * 1.0,
+      position.y * 4.0 - time * 1.2,
+      position.z * 4.0 + time * 0.9
+    ));
+    
+    arcNoise = mix(arcNoise, 1.0 - voronoiPattern, 0.4);
+    
+    float electricDistortion = fbm_improved(vec3(
+      position.x * 3.0 - time * 2.0,
+      position.y * 4.0 + time * 1.5, 
+      position.z * 3.0 - time * 1.8
+    ));
+    
+    float arcEffect = 0.0;
+    float arcThreshold = mix(0.65, 0.55, arcFrequency * 0.5); 
+    
+    if (arcNoise > arcThreshold) {
+      float arcStrength = smoothstep(arcThreshold, arcThreshold + 0.2, arcNoise);
+      arcEffect = arcStrength * arcFrequency * 2.0;
+    }
+    
+    float jumpThreshold = 0.97 - arcFrequency * 0.3;
+    float jumpChance = hash(floor(time * 10.0) + length(position) * 20.0); 
+    
+    if (jumpChance > jumpThreshold) {
+      float jumpStrength = (jumpChance - jumpThreshold) / (1.0 - jumpThreshold);
+      arcEffect += jumpStrength * arcFrequency * 2.0;
+    }
+    
+    vec3 mousePos = vec3(mouse.x, mouse.y, 0.0) * 5.0;
+    float dist = length(pos - mousePos);
+    vDistFromMouse = dist;
+    
+    float rippleSpeed = 15.0;
+    float ripple1 = sin(dist * 3.0 - time * rippleSpeed) * mouseInfluence;
+    float ripple2 = sin(dist * 6.0 - time * (rippleSpeed * 1.2)) * mouseInfluence * 0.6;
+    float ripple3 = sin(dist * 9.0 - time * (rippleSpeed * 0.8)) * mouseInfluence * 0.3;
+    
+    float falloff = smoothstep(5.0, 0.2, dist);
+    float combinedRipple = (ripple1 + ripple2 + ripple3) * falloff;
+    
+    vec3 pullDir = normalize(mousePos - pos);
+    float pullStrength = mouseInfluence * smoothstep(4.0, 0.0, dist) * 0.7;
+    
+    if (mouseInfluence > 0.5 && dist < 1.5) {
+      float snap = (sin(time * 30.0 + position.x * 20.0) * 0.5 + 0.5) * 0.08 * mouseInfluence;
+      pullStrength += snap * (1.0 - dist / 1.5); 
+    }
+    
+    pos += normal * (wave * 0.2 * electricIntensity);
+    pos += normal * (arcEffect * 0.5 * electricIntensity); 
+    pos += normal * (electricDistortion * 0.15 * electricIntensity);
+    
+    float additionalNoise = fbm(vec3(
+      position.x * 6.0 + time * 2.5,
+      position.y * 6.0 - time * 3.0, 
+      position.z * 6.0 + time * 2.0
+    )) * 0.08 * electricIntensity;
+    
+    pos += normal * additionalNoise;
+    pos += normal * (combinedRipple * 0.8);
+    pos += pullDir * pullStrength;
+    
+    vIntensity = wave * 0.5 + 0.5 + arcEffect * 2.5 + abs(combinedRipple) + electricDistortion * 0.5;
+    
+    vIntensity += sin(time * 2.0) * 0.1 * electricIntensity;
+    
+    vPosition = pos;
+    
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+  }
+`;
+
+        const electricFragmentShader = `
+  uniform float time;
+  uniform float mouseInfluence;
+  uniform float electricIntensity;
+  uniform float glowStrength;
+  uniform float arcFrequency;
+  uniform vec3 themeColors[5]; 
+  
+  varying vec3 vPosition;
+  varying vec3 vNormal;
+  varying float vIntensity;
+  varying float vDistFromMouse;
+  varying vec2 vUv;
+  
+  ${noiseHelperFunctions}
+  
+  void main() {
+    vec3 deepColor = themeColors[0];
+    vec3 baseColor = themeColors[1];
+    vec3 mainColor = themeColors[2];
+    vec3 accentColor = themeColors[3];
+    vec3 highlightColor = themeColors[4];
+    
+    float t1 = sin(time * 0.7) * 0.5 + 0.5;
+    float t2 = sin(time * 0.5 + 1.5) * 0.5 + 0.5;
+    float t3 = sin(time * 1.3 + 0.7) * 0.5 + 0.5;
+    
+    float noisePattern = fbm_improved(vec3(
+      vPosition.x * 3.0 + time * 1.0,
+      vPosition.y * 3.0 - time * 0.7, 
+      vPosition.z * 3.0 + time * 1.2
+    ));
+    
+    float pulse = sin(time * 3.0 + vPosition.x * 0.5) * 0.5 + 0.5;
+    float fastPulse = sin(time * 15.0 + vPosition.y * 0.8) * 0.5 + 0.5;
+    
+    float arcSpeed1 = 8.0;
+    float arcSpeed2 = 12.0;
+    float arcTravel1 = sin(vPosition.x * 12.0 + vPosition.y * 12.0 + time * arcSpeed1);
+    float arcTravel2 = sin(vPosition.y * 8.0 + vPosition.z * 8.0 + time * (arcSpeed1 * 0.7));
+    float arcTravel3 = sin(vPosition.x * 6.0 + vPosition.z * 10.0 + time * arcSpeed2);
+    
+    float branchPattern = voronoi(vec3(
+      vPosition.x * 5.0 + time * 2.0,
+      vPosition.y * 5.0 - time * 1.5,
+      vPosition.z * 5.0 + time * 2.5
+    ));
+    
+    float arc1 = smoothstep(0.7, 0.9, arcTravel1) * smoothstep(0.9, 0.7, arcTravel1);
+    float arc2 = smoothstep(0.6, 0.8, arcTravel2) * smoothstep(0.8, 0.6, arcTravel2);
+    float arc3 = smoothstep(0.75, 0.85, arcTravel3) * smoothstep(0.85, 0.75, arcTravel3);
+    
+    float arcMix = max(max(arc1, arc2), arc3);
+    float arc = mix(arcMix, 1.0 - branchPattern, 0.3) * electricIntensity * arcFrequency * 2.0;
+    
+    float nodeEffect = 0.0;
+    vec3 normPos = normalize(vPosition);
+    float xFactor = abs(normPos.x);
+    float yFactor = abs(normPos.y);
+    float zFactor = abs(normPos.z);
+    
+    float nodeFactor = voronoi(vPosition * 5.0 + time * 0.5);
+    
+    if ((xFactor > 0.95 || yFactor > 0.95 || zFactor > 0.95) && 
+        nodeFactor < 0.3 && hash3D(floor(vPosition * 12.0)) > 0.5) {
+      float nodePulse = sin(time * 5.0 + hash(length(vPosition)) * 10.0) * 0.5 + 0.5;
+      nodeEffect = nodePulse * arcFrequency * 0.8;
+    }
+    
+    float spark = 0.0;
+    float sparkThreshold = 0.98 - arcFrequency * 0.25;
+    
+    if (hash(floor(time * 20.0) + vPosition.x * 17.0 + vPosition.y * 9.0) > sparkThreshold) {
+      spark = (0.7 + hash(vPosition.z + time) * 0.3) * electricIntensity;
+      
+      float sparkShape = hash(vPosition.y * 32.0 + time * 5.0); 
+      spark *= smoothstep(0.0, 0.3, sparkShape);
+    }
+    
+    vec3 baseColorMix = mix(deepColor, baseColor, noisePattern * 0.7 + 0.3);
+    baseColorMix = mix(baseColorMix, mainColor, t1 * 0.5 * electricIntensity);
+    
+    float energyFlow = fbm_improved(vec3(
+      vPosition.x * 2.0 - time * 2.0,
+      vPosition.y * 2.0 + time * 1.0, 
+      vPosition.z * 2.0 - time * 1.5
+    ));
+    
+    baseColorMix = mix(baseColorMix, mainColor, energyFlow * 0.4 * electricIntensity);
+    
+    float arcWidth = (0.7 + sin(time * 3.0 + vPosition.x * 5.0) * 0.3);
+    vec3 arcColor = mix(mainColor, accentColor, arcWidth * t2);
+    arcColor = mix(arcColor, highlightColor, arc * t3 * 0.7);
+    
+    float arcVariation = fbm(vec3(
+      vPosition.x * 4.0 + time * 1.5,
+      vPosition.y * 4.0 - time * 2.0,
+      vPosition.z * 4.0 + time * 1.0
+    ));
+    
+    arcColor = mix(arcColor, accentColor, arcVariation * 0.4);
+    
+    vec3 finalColor = mix(baseColorMix, arcColor, arc * arcWidth * 0.9);
+    
+    vec3 nodeColor = mix(accentColor, highlightColor, fastPulse);
+    finalColor = mix(finalColor, nodeColor, nodeEffect);
+    finalColor = mix(finalColor, highlightColor, nodeEffect * fastPulse * 0.7);
+    
+    vec3 sparkColor = mix(accentColor, highlightColor, hash(vPosition.y + time) * 0.7 + 0.3);
+    finalColor = mix(finalColor, sparkColor, spark);
+    
+    float highlight = smoothstep(0.5, 1.2, vIntensity);
+    finalColor = mix(finalColor, mainColor, highlight * 0.5 * (1.0 - arc));
+    finalColor = mix(finalColor, accentColor, highlight * 0.4 * arc);
+    
+    float mouseEffect = smoothstep(5.0, 0.5, vDistFromMouse) * mouseInfluence;
+    
+    if (mouseEffect > 0.3) {
+      float discharge = hash(vPosition.x * 10.0 + vPosition.y * 10.0 + floor(time * 25.0));
+      
+      if (discharge > 0.7) {
+        float dischargeBranch = fbm(vec3(
+          vPosition.x * 20.0 + time * 5.0,
+          vPosition.y * 20.0 - time * 6.0,
+          vPosition.z * 20.0 + time * 4.0
+        ));
+        
+        vec3 dischargeColor = mix(accentColor, highlightColor, (discharge - 0.7) * 3.0);
+        dischargeColor = mix(dischargeColor, mainColor, dischargeBranch * 0.5);
+        
+        finalColor = mix(finalColor, dischargeColor, (discharge - 0.7) * 3.0 * mouseEffect);
+      }
+    }
+    
+    float edgeFactor = pow(1.0 - abs(dot(vNormal, vec3(0.0, 0.0, 1.0))), 2.0);
+    
+    vec3 edgeColor = mix(mainColor, accentColor, t2);
+    edgeColor = mix(edgeColor, highlightColor, edgeFactor * 0.5);
+    
+    float edgeNoise = fbm(vec3(
+      vPosition.x * 8.0 + time * 2.0,
+      vPosition.y * 8.0 - time * 1.5,
+      vPosition.z * 8.0 + time * 2.5
+    )) * 0.5 + 0.5;
+    
+    edgeColor = mix(edgeColor, accentColor, edgeNoise * 0.6);
+    finalColor += edgeColor * edgeFactor * electricIntensity * 0.8;
+    
+    float flickerSpeed = 25.0 + hash(vPosition.y * 10.0) * 20.0; 
+    float flicker = 0.92 + 0.08 * hash(vPosition.x * 15.0 + floor(time * flickerSpeed));
+    flicker *= 0.96 + 0.04 * sin(time * (50.0 + hash(vPosition.z) * 40.0) + vPosition.y * 30.0);
+    finalColor *= flicker;
+    
+    float glow = pow(vIntensity * (mouseEffect * 0.5 + 0.5), 2.0) * glowStrength;
+    
+    vec3 glowColor = mix(mainColor, accentColor, t3 * 0.7 + noisePattern * 0.3);
+    
+    finalColor += glowColor * glow * 0.7;
+    finalColor += highlightColor * glow * 0.4 * pulse;
+    
+    float brightnessFactor = 0.6 + electricIntensity * 0.6;
+    brightnessFactor *= (0.95 + 0.05 * sin(time * 2.0)); 
+    
+    finalColor *= brightnessFactor;
+    
+    gl_FragColor = vec4(finalColor, 1.0);
+  }
+`;
+
+        function createElectricWireframeSphere(radius, segments) {
+            const geometry = new THREE.BufferGeometry();
+            const positions = [];
+            const normals = [];
+            const uvs = [];
+            const indices = [];
+
+            for (let y = 0; y <= segments; y++) {
+                const v = y / segments;
+                const phi = v * Math.PI;
+
+                for (let x = 0; x <= segments; x++) {
+                    const u = x / segments;
+                    const theta = u * Math.PI * 2;
+
+                    const noiseFactor = Math.sin(theta * 6) * Math.cos(phi * 5) * 0.04 +
+                        Math.sin(theta * 8) * Math.sin(phi * 7) * 0.03;
+
+                    const distortion = 1.0 + noiseFactor;
+
+                    const px = -radius * Math.cos(theta) * Math.sin(phi) * distortion;
+                    const py = radius * Math.cos(phi) * distortion;
+                    const pz = radius * Math.sin(theta) * Math.sin(phi) * distortion;
+
+                    positions.push(px, py, pz);
+
+                    const normal = new THREE.Vector3(px, py, pz).normalize();
+                    normals.push(normal.x, normal.y, normal.z);
+
+                    uvs.push(u, v);
+                }
+            }
+
+            for (let y = 0; y < segments; y++) {
+                for (let x = 0; x < segments; x++) {
+                    const a = (segments + 1) * y + x;
+                    const b = (segments + 1) * y + x + 1;
+                    const c = (segments + 1) * (y + 1) + x;
+                    const d = (segments + 1) * (y + 1) + x + 1;
+
+                    indices.push(a, b);
+                    indices.push(a, c);
+
+                    if ((x % 3 == 0 && y % 2 == 0) || (x % 2 == 0 && y % 3 == 0)) {
+                        indices.push(a, d);
                     }
-                } else {
-                    nodes.length = targetNodeCount;
-                }
-            }
-            console.log("Performance quality set to " + activeQuality + "%. Active nodes: " + nodes.length);
-        };
 
-        class Node {
-            constructor() {
-                this.theta = Math.random() * Math.PI * 2;
-                this.phi = Math.acos((Math.random() * 2) - 1);
-                this.x = 0;
-                this.y = 0;
-                this.z = 0;
-                this.size = 1.2 + Math.random() * 2.5;
-                this.color = themeColors.PRI;
-                this.pulse = Math.random() * Math.PI * 2;
-                this.pulseSpeed = 0.03 + Math.random() * 0.06;
-                this.synapticFiring = 0;
-                this.randomizeColor();
-            }
+                    if ((x + y) % 4 == 0) {
+                        indices.push(b, c);
+                    }
 
-            randomizeColor() {
-                const rand = Math.random();
-                if (rand > 0.6) {
-                    this.color = themeColors.PRI;
-                } else if (rand > 0.2) {
-                    this.color = themeColors.TEXT;
-                } else {
-                    this.color = themeColors.PRI_DIM;
+                    if (y === segments - 1) indices.push(c, d);
+                    if (x === segments - 1) indices.push(b, d);
                 }
             }
 
-            update(rx, ry, intensity, radius) {
-                let speedMultiplier = 1;
-                if (currentState === "THINKING") speedMultiplier = 4.5;
-                else if (currentState === "SPEAKING") speedMultiplier = 2.0;
-                else if (currentState === "MUTED") speedMultiplier = 0.25;
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+            geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+            geometry.setIndex(indices);
 
-                this.pulse += this.pulseSpeed * speedMultiplier;
-                if (this.synapticFiring > 0) this.synapticFiring -= 0.04;
+            return geometry;
+        }
 
-                // Independent organic breathing wave
-                let wave = Math.sin(this.pulse + Date.now() * 0.001) * 0.04 * intensity;
-                let r = radius * (1.0 + wave);
-
-                let x = r * Math.sin(this.phi) * Math.cos(this.theta);
-                let y = r * Math.sin(this.phi) * Math.sin(this.theta);
-                let z = r * Math.cos(this.phi);
-
-                // Rotate Y
-                let x1 = x * Math.cos(ry) - z * Math.sin(ry);
-                let z1 = x * Math.sin(ry) + z * Math.cos(ry);
-
-                // Rotate X
-                let y2 = y * Math.cos(rx) - z1 * Math.sin(rx);
-                let z2 = y * Math.sin(rx) + z1 * Math.cos(rx);
-
-                this.x = x1;
-                this.y = y2;
-                this.z = z2;
-            }
-
-            draw(ctx, centerX, centerY, intensity) {
-                const scale = (this.z + sphereRadius) / (sphereRadius * 2) * 0.75 + 0.25;
-                const firingBoost = this.synapticFiring * 4.0;
-                const opacity = scale * (0.4 + Math.sin(this.pulse) * 0.25) * intensity;
-
-                ctx.beginPath();
-                const scaleModifier = (currentState === "SPEAKING") ? (1.0 + currentVolume * 2.0) : 1.0;
-                const radius = this.size * scale * scaleModifier + firingBoost;
-                
-                ctx.arc(centerX + this.x, centerY + this.y, radius, 0, Math.PI * 2);
-                ctx.fillStyle = this.color;
-                ctx.globalAlpha = Math.min(1.0, opacity + this.synapticFiring);
-                ctx.fill();
-
-                if (scale > 0.6 || this.synapticFiring > 0.1) {
-                    ctx.shadowBlur = (15 + firingBoost * 10) * intensity;
-                    ctx.shadowColor = this.color;
-                    ctx.fill();
-                    ctx.shadowBlur = 0;
+        const electricMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                time: { value: 0 },
+                mouse: { value: new THREE.Vector2() },
+                mouseInfluence: { value: 0.0 },
+                electricIntensity: { value: settings.electricIntensity },
+                arcFrequency: { value: settings.arcFrequency },
+                glowStrength: { value: settings.glowStrength },
+                themeColors: {
+                    value: [
+                        colors.deepColor,
+                        colors.baseColor,
+                        colors.mainColor,
+                        colors.accentColor,
+                        colors.highlightColor
+                    ]
                 }
-            }
-        }
+            },
+            vertexShader: electricVertexShader,
+            fragmentShader: electricFragmentShader,
+            transparent: true,
+            wireframe: true,
+            wireframeLinewidth: 1
+        });
 
-        function init() {
-            resize();
-            nodes.length = 0;
-            for (let i = 0; i < targetNodeCount; i++) {
-                nodes.push(new Node());
-            }
-        }
+        const sphereGeometry = createElectricWireframeSphere(2, 40);
+        const electricSphere = new THREE.LineSegments(sphereGeometry, electricMaterial);
+        scene.add(electricSphere);
 
-        function resize() {
-            // Bilinear Hardware Downsampling / Resolution Scaling
-            // Renders the canvas at 80% resolution, stretching it to 100% via hardware CSS interpolation.
-            // This reduces pixel fillrate and memory overhead by ~36% with zero perceived loss in visual quality.
-            const scaleFactor = 0.80;
-            const rawWidth = orbWrapper.clientWidth;
-            const rawHeight = orbWrapper.clientHeight;
-            width = canvas.width = Math.round(rawWidth * scaleFactor);
-            height = canvas.height = Math.round(rawHeight * scaleFactor);
+        function createLightningBolts() {
+            const boltCount = 30;
+            const bolts = new THREE.Group();
 
-            // Calculate raw sphere radius based on original dimensions
-            rawSphereRadius = Math.min(rawWidth, rawHeight) * 0.42;
-            if (rawSphereRadius > 145) rawSphereRadius = 145;
-            if (rawSphereRadius < 100) rawSphereRadius = 100;
-
-            // Scale the rendering sphereRadius to match canvas pixels
-            sphereRadius = rawSphereRadius * scaleFactor;
-        }
-        window.addEventListener('resize', resize);
-
-        function triggerRipple() {
-            const ripple = document.createElement('div');
-            ripple.className = 'ripple';
-            ripple.style.left = '50%';
-            ripple.style.top = '50%';
-            ripple.style.transform = 'translate(-50%, -50%)';
-            orbWrapper.appendChild(ripple);
-            setTimeout(() => ripple.remove(), 1500);
-
-            nodes.forEach(n => {
-                if (Math.random() > 0.6) n.synapticFiring = 0.9;
-            });
-        }
-
-        function createFloatingParticle() {
-            const particle = document.createElement('div');
-            particle.className = 'data-particle';
-            const rect = orbWrapper.getBoundingClientRect();
-            particle.style.left = (rect.width / 2 + (Math.random() - 0.5) * (rawSphereRadius * 1.8)) + 'px';
-            particle.style.top = (rect.height / 2 + (Math.random() - 0.5) * (rawSphereRadius * 1.8)) + 'px';
-            orbWrapper.appendChild(particle);
-
-            const duration = 1200 + Math.random() * 2000;
-            const anim = particle.animate([
-                { transform: 'translate(0,0) scale(1)', opacity: 0 },
-                { transform: `translate(${(Math.random() - 0.5) * 100}px, -80px) scale(1.4)`, opacity: 0.85, offset: 0.5 },
-                { transform: `translate(${(Math.random() - 0.5) * 200}px, -180px) scale(0)`, opacity: 0 }
-            ], { duration, easing: 'ease-out' });
-            anim.onfinish = () => particle.remove();
-        }
-
-        function animate(timestamp) {
-            // Frame rate limiting based on performance quality
-            // Quality 100: ~60fps, Quality 50: ~30fps, Quality 10: ~10fps
-            let targetFps = 10 + (activeQuality / 100) * 50;
-            let interval = 1000 / targetFps;
-            
-            if (timestamp) {
-                let elapsed = timestamp - lastFrameTime;
-                if (elapsed < interval) {
-                    requestAnimationFrame(animate);
-                    return;
-                }
-                lastFrameTime = timestamp - (elapsed % interval);
-            } else {
-                lastFrameTime = performance.now();
-            }
-
-            ctx.clearRect(0, 0, width, height);
-            const centerX = width / 2;
-            const centerY = height / 2;
-
-            if (currentState === "SPEAKING") {
-                const voicePulse = 1.0 + currentVolume * 0.22;
-                canvas.style.transform = `scale(${voicePulse})`;
-            } else if (currentState === "THINKING") {
-                const thinkPulse = 1.02 + Math.sin(Date.now() * 0.015) * 0.02;
-                canvas.style.transform = `scale(${thinkPulse})`;
-            } else {
-                canvas.style.transform = `scale(1)`;
-            }
-
-            let noise = (Math.random() - 0.5) * 0.12;
-            let intensity = baseIntensity;
-
-            if (currentState === "MUTED") {
-                intensity = 0.5;
-                rotationY += 0.0006;
-                rotationX += 0.0002;
-            } else if (currentState === "THINKING") {
-                intensity = 1.6;
-                rotationY += 0.018;
-                rotationX += 0.006;
-            } else if (currentState === "SPEAKING") {
-                intensity = 1.2 + currentVolume * 0.8;
-                rotationY += 0.006 + currentVolume * 0.03;
-                rotationX += 0.002 + currentVolume * 0.01;
-            } else { // LISTENING
-                intensity = 1.0 + noise;
-                rotationY += 0.0022;
-                rotationX += 0.0008;
-            }
-
-            // Calculate breathing radius dynamically based on state & speech volume
-            let currentRadius = sphereRadius;
-            if (currentState === "SPEAKING") {
-                currentRadius = sphereRadius * (1.0 + currentVolume * 0.32); // Expand sphere up to 32%
-            } else if (currentState === "THINKING") {
-                currentRadius = sphereRadius * (1.0 + Math.sin(Date.now() * 0.015) * 0.04); // Ethereal breathing pulse
-            }
-
-            // Draw beautiful central glowing arc-reactor core inside the canvas
-            if (currentState !== "MUTED" && activeQuality > 15) {
-                const glowGrad = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, currentRadius * 0.95);
-                const centralGlowOpacity = 0.25 + (currentState === "SPEAKING" ? currentVolume * 0.35 : 0.06);
-                glowGrad.addColorStop(0, hexToRgba(themeColors.PRI, centralGlowOpacity));
-                glowGrad.addColorStop(1, 'transparent');
-                ctx.fillStyle = glowGrad;
-                ctx.beginPath();
-                ctx.arc(centerX, centerY, currentRadius * 0.95, 0, Math.PI * 2);
-                ctx.fill();
-            }
-
-            // Create a depth-sorted render queue for both connections and nodes
-            const renderQueue = [];
-
-            // Update nodes and add them to render queue
-            nodes.forEach(node => {
-                node.update(rotationX, rotationY, intensity, currentRadius);
-                renderQueue.push({
-                    z: node.z,
-                    draw: () => node.draw(ctx, centerX, centerY, intensity)
-                });
+            const boltMaterial = new THREE.LineBasicMaterial({
+                color: colors.accentColor,
+                transparent: true,
+                opacity: 0.8
             });
 
-            // Calculate dynamic distance threshold: only connect true nearby surface neighbors!
-            let distThreshold = currentRadius * 0.75;
-            if (currentState === "MUTED") {
-                distThreshold = currentRadius * 0.55;
-            } else if (currentState === "THINKING") {
-                distThreshold = currentRadius * 0.85;
-            } else if (currentState === "SPEAKING") {
-                distThreshold = currentRadius * (0.75 + currentVolume * 0.25);
-            }
-            
-            if (activeQuality < 50) {
-                distThreshold *= (activeQuality / 50); // Scale down connection distance check
-            }
+            const branchMaterial = new THREE.LineBasicMaterial({
+                color: colors.highlightColor,
+                transparent: true,
+                opacity: 0.6
+            });
 
-            // Connections scaling: quality < 20 completely disables lines for massive CPU/GPU saving!
-            const connectionLimit = (activeQuality < 20) ? 0 : ((currentState === "MUTED") ? 1 : ((currentState === "THINKING") ? 5 : 3));
+            const subBranchMaterial = new THREE.LineBasicMaterial({
+                color: new THREE.Color().lerpColors(colors.accentColor, colors.highlightColor, 0.5),
+                transparent: true,
+                opacity: 0.5
+            });
 
-            if (connectionLimit > 0) {
-                for (let i = 0; i < nodes.length; i++) {
-                    let connections = 0;
-                    for (let j = i + 1; j < nodes.length; j++) {
-                        if (connections > connectionLimit) break;
-                        
-                        const dx = nodes[i].x - nodes[j].x;
-                        const dy = nodes[i].y - nodes[j].y;
-                        const dz = nodes[i].z - nodes[j].z;
-                        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            for (let i = 0; i < boltCount; i++) {
+                const boltGroup = new THREE.Group();
 
-                        if (dist < distThreshold) {
-                            connections++;
-                            const lineZ = (nodes[i].z + nodes[j].z) / 2;
-                            const scale = (lineZ + currentRadius) / (currentRadius * 2);
-                            const opacity = (1 - dist / distThreshold) * 0.42 * scale * intensity;
+                const points = [];
+                const segments = 8 + Math.floor(Math.random() * 10);
 
-                            const n1 = nodes[i];
-                            const n2 = nodes[j];
+                const startTheta = Math.random() * Math.PI * 2;
+                const startPhi = Math.acos(2 * Math.random() - 1);
+                const startX = 2 * Math.sin(startPhi) * Math.cos(startTheta);
+                const startY = 2 * Math.cos(startPhi);
+                const startZ = 2 * Math.sin(startPhi) * Math.sin(startTheta);
 
-                            renderQueue.push({
-                                z: lineZ,
-                                draw: () => {
-                                    ctx.beginPath();
-                                    ctx.lineWidth = 0.5 + (scale * 1.8);
-                                    ctx.moveTo(centerX + n1.x, centerY + n1.y);
-                                    ctx.lineTo(centerX + n2.x, centerY + n2.y);
+                const length = 0.6 + Math.random() * 1.4;
+                const endX = startX * (1 + length);
+                const endY = startY * (1 + length);
+                const endZ = startZ * (1 + length);
 
-                                    const grad = ctx.createLinearGradient(
-                                        centerX + n1.x, centerY + n1.y,
-                                        centerX + n2.x, centerY + n2.y
+                points.push(new THREE.Vector3(startX, startY, startZ));
+
+                for (let j = 1; j < segments; j++) {
+                    const t = j / segments;
+
+                    const x = startX + (endX - startX) * t;
+                    const y = startY + (endY - startY) * t;
+                    const z = startZ + (endZ - startZ) * t;
+
+                    const dirX = endX - startX;
+                    const dirY = endY - startY;
+                    const dirZ = endZ - startZ;
+
+                    const dirLength = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
+
+                    let perpX, perpY, perpZ;
+
+                    if (Math.abs(dirX) < Math.abs(dirY) && Math.abs(dirX) < Math.abs(dirZ)) {
+                        perpX = 0;
+                        perpY = dirZ / dirLength;
+                        perpZ = -dirY / dirLength;
+                    } else if (Math.abs(dirY) < Math.abs(dirZ)) {
+                        perpX = -dirZ / dirLength;
+                        perpY = 0;
+                        perpZ = dirX / dirLength;
+                    } else {
+                        perpX = dirY / dirLength;
+                        perpY = -dirX / dirLength;
+                        perpZ = 0;
+                    }
+
+                    const perpLength = Math.sqrt(perpX * perpX + perpY * perpY + perpZ * perpZ);
+                    perpX /= perpLength;
+                    perpY /= perpLength;
+                    perpZ /= perpLength;
+
+                    const jDistance = Math.min(t, 1 - t) * 2;
+                    const jaggedness = (Math.random() - 0.5) * 0.8 * jDistance;
+
+                    const finalX = x + perpX * jaggedness;
+                    const finalY = y + perpY * jaggedness;
+                    const finalZ = z + perpZ * jaggedness;
+
+                    const point = new THREE.Vector3(finalX, finalY, finalZ);
+                    points.push(point);
+
+                    if (j > 1 && j < segments - 1 && Math.random() > (0.7 - jDistance * 0.3)) {
+                        const branchCount = Math.floor(Math.random() * 3) + 1;
+
+                        for (let b = 0; b < branchCount; b++) {
+                            const branchPoints = [];
+                            branchPoints.push(point.clone());
+
+                            const branchDirX = perpX + (Math.random() - 0.5);
+                            const branchDirY = perpY + (Math.random() - 0.5);
+                            const branchDirZ = perpZ + (Math.random() - 0.5);
+
+                            const branchLength = Math.sqrt(branchDirX * branchDirX + branchDirY * branchDirY + branchDirZ * branchDirZ);
+                            const branchDir = new THREE.Vector3(
+                                branchDirX / branchLength,
+                                branchDirY / branchLength,
+                                branchDirZ / branchLength
+                            );
+
+                            const branchDistance = 0.4 + Math.random() * 0.8;
+                            const branchSegments = 3 + Math.floor(Math.random() * 5);
+
+                            let lastPoint = point.clone();
+
+                            for (let k = 1; k <= branchSegments; k++) {
+                                const bt = k / branchSegments;
+
+                                let branchX = point.x + branchDir.x * branchDistance * bt;
+                                let branchY = point.y + branchDir.y * branchDistance * bt;
+                                let branchZ = point.z + branchDir.z * branchDistance * bt;
+
+                                const curve = Math.sin(bt * Math.PI) * 0.2;
+                                branchX += perpX * curve;
+                                branchY += perpY * curve;
+                                branchZ += perpZ * curve;
+
+                                const branchJagged = (Math.random() - 0.5) * 0.4 * bt;
+                                const branchFinalX = branchX + perpX * branchJagged;
+                                const branchFinalY = branchY + perpY * branchJagged;
+                                const branchFinalZ = branchZ + perpZ * branchJagged;
+
+                                const branchPoint = new THREE.Vector3(branchFinalX, branchFinalY, branchFinalZ);
+                                branchPoints.push(branchPoint);
+                                lastPoint = branchPoint;
+
+                                if (k > 1 && k < branchSegments && Math.random() > (0.8 - bt * 0.2)) {
+                                    const subBranchPoints = [];
+                                    subBranchPoints.push(lastPoint.clone());
+
+                                    const subDirX = perpX + (Math.random() - 0.5) * 2;
+                                    const subDirY = perpY + (Math.random() - 0.5) * 2;
+                                    const subDirZ = perpZ + (Math.random() - 0.5) * 2;
+
+                                    const subDirLength = Math.sqrt(subDirX * subDirX + subDirY * subDirY + subDirZ * subDirZ);
+                                    const subDir = new THREE.Vector3(
+                                        subDirX / subDirLength,
+                                        subDirY / subDirLength,
+                                        subDirZ / subDirLength
                                     );
-                                    grad.addColorStop(0, n1.color);
-                                    grad.addColorStop(1, n2.color);
-                                    ctx.strokeStyle = grad;
-                                    ctx.globalAlpha = opacity;
-                                    ctx.stroke();
 
-                                    const threshold = (currentState === "THINKING") ? 0.93 : 0.992;
-                                    if (Math.random() > threshold) {
-                                        ctx.lineWidth = 3.5;
-                                        ctx.globalAlpha = opacity * 2.5;
-                                        ctx.stroke();
-                                        n1.synapticFiring = 0.7;
+                                    const subLength = 0.2 + Math.random() * 0.4;
+                                    const subSegments = 2 + Math.floor(Math.random() * 3);
+
+                                    for (let s = 1; s <= subSegments; s++) {
+                                        const st = s / subSegments;
+
+                                        let subX = lastPoint.x + subDir.x * subLength * st;
+                                        let subY = lastPoint.y + subDir.y * subLength * st;
+                                        let subZ = lastPoint.z + subDir.z * subLength * st;
+
+                                        const subJagged = (Math.random() - 0.5) * 0.2 * st;
+                                        const subFinalX = subX + perpX * subJagged;
+                                        const subFinalY = subY + perpY * subJagged;
+                                        const subFinalZ = subZ + perpZ * subJagged;
+
+                                        subBranchPoints.push(new THREE.Vector3(subFinalX, subFinalY, subFinalZ));
                                     }
+
+                                    const subGeometry = new THREE.BufferGeometry().setFromPoints(subBranchPoints);
+                                    const subBranch = new THREE.Line(subGeometry, subBranchMaterial.clone());
+                                    subBranch.userData = {
+                                        lifetime: 0.05 + Math.random() * 0.1,
+                                        age: 0,
+                                        active: false
+                                    };
+                                    subBranch.visible = false;
+                                    boltGroup.add(subBranch);
                                 }
-                            });
+                            }
+
+                            const branchGeometry = new THREE.BufferGeometry().setFromPoints(branchPoints);
+                            const branch = new THREE.Line(branchGeometry, branchMaterial.clone());
+                            branch.userData = {
+                                lifetime: 0.1 + Math.random() * 0.2,
+                                age: 0,
+                                active: false
+                            };
+                            branch.visible = false;
+                            boltGroup.add(branch);
                         }
                     }
                 }
+
+                points.push(new THREE.Vector3(endX, endY, endZ));
+
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+
+                const bolt = new THREE.Line(geometry, boltMaterial.clone());
+                bolt.userData = {
+                    lifetime: 0.2 + Math.random() * 0.3,
+                    age: 0,
+                    active: false
+                };
+
+                bolt.visible = false;
+                boltGroup.add(bolt);
+                boltGroup.userData = {
+                    isMainBolt: true,
+                    branchCount: boltGroup.children.length - 1
+                };
+
+                bolts.add(boltGroup);
             }
 
-            // Sort queue back-to-front
-            renderQueue.sort((a, b) => a.z - b.z);
-
-            // Execute draw operations in 3D order
-            renderQueue.forEach(item => item.draw());
-
-            // Stats
-            document.getElementById('stat-sync').textContent = (currentState === "THINKING" ? (99.4 + Math.random() * 0.5) : (98.8 + Math.random() * 0.8)).toFixed(1) + '%';
-            document.getElementById('stat-load').textContent = (currentState === "THINKING" ? Math.floor(2 + Math.random() * 4) : (currentState === "MUTED" ? '0' : Math.floor(6 + Math.random() * 7))) + ' ms';
-
-            // Particles: quality < 30 disables ambient floating particles
-            if (currentState !== "MUTED" && activeQuality > 30) {
-                const particleChance = (currentState === "THINKING") ? 0.4 : ((currentState === "SPEAKING") ? 0.6 : 0.985);
-                if (Math.random() > particleChance) createFloatingParticle();
-            }
-
-            if (currentState === "THINKING" && Math.random() > 0.93 && activeQuality > 30) triggerRipple();
-
-            requestAnimationFrame(animate);
+            return bolts;
         }
 
-        // Click actions
-        function onMicTriggerClick() {
-            if (pyBridge) {
-                pyBridge.toggle_mute();
+        function createChainLightning() {
+            const chains = new THREE.Group();
+
+            const chainMaterial = new THREE.LineBasicMaterial({
+                color: colors.accentColor,
+                transparent: true,
+                opacity: 0.7
+            });
+
+            const nodeCount = 30;
+            const nodes = [];
+
+            for (let i = 0; i < nodeCount; i++) {
+                const phi = Math.acos(1 - 2 * (i + 0.5) / nodeCount);
+                const theta = Math.sqrt(nodeCount * Math.PI) * phi;
+
+                const x = 2 * Math.sin(phi) * Math.cos(theta);
+                const y = 2 * Math.cos(phi);
+                const z = 2 * Math.sin(phi) * Math.sin(theta);
+
+                nodes.push(new THREE.Vector3(x, y, z));
             }
-        }
 
-        function setMuteFromWeb(mute) {
-            if (isMuted !== mute) {
-                onMicTriggerClick();
-            }
-        }
+            nodes.forEach(node => {
+                node.x += (Math.random() - 0.5) * 0.2;
+                node.y += (Math.random() - 0.5) * 0.2;
+                node.z += (Math.random() - 0.5) * 0.2;
 
-        // Exposed API called by Python to update UI state
-        window.updateState = function(state) {
-            currentState = state;
-            console.log("State updated to: " + state);
+                const len = 2 / node.length();
+                node.multiplyScalar(len);
+            });
 
-            const micBtn = document.getElementById('mic-trigger');
-            const micIcon = document.getElementById('mic-icon');
-            const ring1 = document.getElementById('ring-1');
-            const ring2 = document.getElementById('ring-2');
-            const lblOn = document.getElementById('lbl-mic-on');
-            const lblMuted = document.getElementById('lbl-mic-muted');
+            for (let i = 0; i < nodeCount; i++) {
+                for (let j = i + 1; j < nodeCount; j++) {
+                    const startNode = nodes[i];
+                    const endNode = nodes[j];
 
-            if (state === "MUTED") {
-                isMuted = true;
-                micBtn.classList.add('muted');
-                micIcon.textContent = 'mic_off';
-                ring1.style.opacity = '0';
-                ring2.style.opacity = '0';
-                baseIntensity = 0.6;
+                    const distance = startNode.distanceTo(endNode);
+                    if (distance < 2.2) {
+                        const chainPoints = [];
+                        const segments = 5 + Math.floor(Math.random() * 4);
 
-                // Pill UI labels styling
-                lblMuted.style.opacity = '1.0';
-                lblMuted.style.textShadow = '0 0 12px rgba(255, 51, 85, 0.8)';
-                lblOn.style.opacity = '0.35';
-                lblOn.style.textShadow = 'none';
-            } else {
-                isMuted = false;
-                micBtn.classList.remove('muted');
-                micIcon.textContent = 'mic';
-                ring1.style.opacity = '1';
-                ring2.style.opacity = '1';
-                baseIntensity = 1.0;
-                if (state === "SPEAKING") {
-                    baseIntensity = 1.2;
+                        chainPoints.push(startNode.clone());
+
+                        const dir = new THREE.Vector3().subVectors(endNode, startNode).normalize();
+
+                        let perpX, perpY, perpZ;
+
+                        if (Math.abs(dir.x) < Math.abs(dir.y) && Math.abs(dir.x) < Math.abs(dir.z)) {
+                            perpX = 0;
+                            perpY = dir.z;
+                            perpZ = -dir.y;
+                        } else if (Math.abs(dir.y) < Math.abs(dir.z)) {
+                            perpX = -dir.z;
+                            perpY = 0;
+                            perpZ = dir.x;
+                        } else {
+                            perpX = dir.y;
+                            perpY = -dir.x;
+                            perpZ = 0;
+                        }
+
+                        const perp = new THREE.Vector3(perpX, perpY, perpZ).normalize();
+
+                        for (let k = 1; k < segments; k++) {
+                            const t = k / segments;
+
+                            const x = startNode.x + (endNode.x - startNode.x) * t;
+                            const y = startNode.y + (endNode.y - startNode.y) * t;
+                            const z = startNode.z + (endNode.z - startNode.z) * t;
+
+                            const jDistance = Math.sin(t * Math.PI);
+                            const jaggedness = (Math.random() - 0.5) * 0.5 * jDistance;
+
+                            const curve = Math.sin(t * Math.PI) * 0.15;
+
+                            const finalX = x + perp.x * (jaggedness + curve);
+                            const finalY = y + perp.y * (jaggedness + curve);
+                            const finalZ = z + perp.z * (jaggedness + curve);
+
+                            chainPoints.push(new THREE.Vector3(finalX, finalY, finalZ));
+                        }
+
+                        chainPoints.push(endNode.clone());
+
+                        const chainGeometry = new THREE.BufferGeometry().setFromPoints(chainPoints);
+                        const chain = new THREE.Line(chainGeometry, chainMaterial.clone());
+
+                        chain.userData = {
+                            lifetime: 0.1 + Math.random() * 0.2,
+                            age: 0,
+                            active: false,
+                            startNodeIndex: i,
+                            endNodeIndex: j
+                        };
+
+                        chain.visible = false;
+                        chains.add(chain);
+                    }
                 }
-
-                // Pill UI labels styling
-                lblOn.style.opacity = '1.0';
-                lblOn.style.textShadow = '0 0 12px var(--primary-glow)';
-                lblMuted.style.opacity = '0.35';
-                lblMuted.style.textShadow = 'none';
             }
-        };
 
-        // Exposed API called by Python to update voice audio envelope
-        window.updateVolume = function(level) {
-            currentVolume = level;
-            const halo = document.getElementById('ambient-halo');
-
-            // Pulsate rings in capsule based on speaking level
-            if (currentState === "SPEAKING" && !isMuted) {
-                const ringScale1 = 1.0 + level * 0.45;
-                const ringScale2 = 1.0 + level * 0.25;
-                ring1.style.transform = `scale(${ringScale1})`;
-                ring2.style.transform = `scale(${ringScale2})`;
-                
-                // Pulsate background ambient glow (aura) in real-time!
-                // IMPORTANT: keep translate(-50%,-50%) so the halo stays centered on orb
-                if (halo) {
-                    const scale = 1.0 + level * 0.65; // expand up to 65% larger
-                    const opacity = 0.12 + level * 0.22; // brighten the aura with speaking volume
-                    halo.style.transform = `translate(-50%, -50%) scale(${scale})`;
-                    halo.style.background = `radial-gradient(circle, ${hexToRgba(themeColors.PRI, opacity)} 0%, transparent 70%)`;
-                }
-            } else {
-                ring1.style.transform = `none`;
-                ring2.style.transform = `none`;
-                
-                if (halo) {
-                    halo.style.transform = `translate(-50%, -50%)`;
-                    halo.style.background = `radial-gradient(circle, ${hexToRgba(themeColors.PRI, 0.2)} 0%, transparent 70%)`;
-                }
-            }
-        };
-
-
-        // Exposed API to adapt themes dynamically in real time
-        window.setThemeColors = function(colors) {
-            themeColors = {
-                PRI: colors.PRI || '#00d4ff',
-                PRI_DIM: colors.PRI_DIM || '#005f77',
-                TEXT: colors.TEXT || '#7aeeff',
-                BG: colors.BG || '#050c14'
+            chains.userData = {
+                nodes: nodes
             };
 
-            // Apply custom CSS variables
-            document.documentElement.style.setProperty('--primary-fixed', themeColors.PRI);
-            document.documentElement.style.setProperty('--primary-fixed-dim', themeColors.PRI_DIM);
-            document.documentElement.style.setProperty('--primary-glow', hexToRgba(themeColors.PRI, 0.4));
-            document.documentElement.style.setProperty('--primary-ring-1-bg', hexToRgba(themeColors.PRI, 0.2));
-            document.documentElement.style.setProperty('--primary-ring-2-bg', hexToRgba(themeColors.PRI, 0.15));
-
-            // Dynamic capsule background matching theme background with 0.85 opacity!
-            const capsuleBg = hexToRgba(themeColors.BG, 0.85);
-            document.documentElement.style.setProperty('--capsule-bg', capsuleBg);
-
-            // Apply theme changes to widgets
-            document.getElementById('ambient-halo').style.background = `radial-gradient(circle, ${hexToRgba(themeColors.PRI, 0.2)} 0%, transparent 70%)`;
-            document.getElementById('synaptic-stats').style.color = themeColors.PRI;
-            
-            // Capsule borders and labels
-            capsuleBorder.style.borderColor = hexToRgba(themeColors.PRI, 0.3);
-            lblOn.style.color = themeColors.PRI;
-
-            if (!isMuted) {
-                lblOn.style.textShadow = `0 0 12px ${hexToRgba(themeColors.PRI, 0.6)}`;
-            }
-
-            nodes.forEach(node => node.randomizeColor());
-        };
-
-        function hexToRgba(hex, alpha) {
-            let c;
-            if(/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)){
-                c = hex.substring(1).split('');
-                if(c.length == 3){
-                    c = [c[0], c[0], c[1], c[1], c[2], c[2]];
-                }
-                c = '0x' + c.join('');
-                return `rgba(${[(c>>16)&255, (c>>8)&255, c&255].join(',')},${alpha})`;
-            }
-            return hex;
+            return chains;
         }
 
-        init();
-        animate();
+        function createElectricParticles() {
+            const particleCount = 1000;
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(particleCount * 3);
+            const sizes = new Float32Array(particleCount);
+            const offsets = new Float32Array(particleCount);
+            const speeds = new Float32Array(particleCount);
+            const particleTypes = new Float32Array(particleCount);
+
+            for (let i = 0; i < particleCount; i++) {
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+
+                let radiusFactor;
+
+                if (i < particleCount * 0.7) {
+                    radiusFactor = 2.0 + (Math.random() - 0.5) * 0.4;
+                } else if (i < particleCount * 0.9) {
+                    radiusFactor = 2.0 + (Math.random() - 0.3) * 0.8;
+                } else {
+                    radiusFactor = 2.0 + (Math.random() * 0.3 + 0.2) * 1.2;
+                }
+
+                const x = radiusFactor * Math.sin(phi) * Math.cos(theta);
+                const y = radiusFactor * Math.sin(phi) * Math.sin(theta);
+                const z = radiusFactor * Math.cos(phi);
+
+                positions[i * 3] = x;
+                positions[i * 3 + 1] = y;
+                positions[i * 3 + 2] = z;
+
+                const randomType = Math.random();
+                let particleType;
+
+                if (randomType < 0.35) particleType = 0;
+                else if (randomType < 0.6) particleType = 1;
+                else if (randomType < 0.75) particleType = 2;
+                else if (randomType < 0.85) particleType = 3;
+                else if (randomType < 0.95) particleType = 4;
+                else particleType = 5;
+
+                let size;
+                switch (particleType) {
+                    case 0:
+                        size = 0.03 + Math.random() * 0.05;
+                        break;
+                    case 1:
+                        size = 0.02 + Math.random() * 0.04;
+                        break;
+                    case 2:
+                        size = 0.04 + Math.random() * 0.08;
+                        break;
+                    case 3:
+                        size = 0.03 + Math.random() * 0.07;
+                        break;
+                    case 4:
+                        size = 0.02 + Math.random() * 0.03;
+                        break;
+                    case 5:
+                        size = 0.01 + Math.random() * 0.02;
+                        break;
+                }
+
+                let speed;
+                switch (particleType) {
+                    case 0:
+                        speed = 0.5 + Math.random() * 1.0;
+                        break;
+                    case 1:
+                        speed = 1.0 + Math.random() * 2.0;
+                        break;
+                    case 2:
+                        speed = 0.3 + Math.random() * 0.7;
+                        break;
+                    case 3:
+                        speed = 0.7 + Math.random() * 1.5;
+                        break;
+                    case 4:
+                        speed = 0.8 + Math.random() * 1.2;
+                        break;
+                    case 5:
+                        speed = 0.2 + Math.random() * 0.4;
+                        break;
+                }
+
+                sizes[i] = size;
+                offsets[i] = Math.random() * 100;
+                speeds[i] = speed;
+                particleTypes[i] = particleType;
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+            geometry.setAttribute('offset', new THREE.BufferAttribute(offsets, 1));
+            geometry.setAttribute('speed', new THREE.BufferAttribute(speeds, 1));
+            geometry.setAttribute('particleType', new THREE.BufferAttribute(particleTypes, 1));
+
+            const particleShader = {
+                uniforms: {
+                    time: { value: 0 },
+                    arcFrequency: { value: settings.arcFrequency },
+                    electricIntensity: { value: settings.electricIntensity },
+                    themeColors: {
+                        value: [
+                            colors.deepColor,
+                            colors.baseColor,
+                            colors.mainColor,
+                            colors.accentColor,
+                            colors.highlightColor
+                        ]
+                    }
+                },
+                vertexShader: `
+      uniform float time;
+      uniform float arcFrequency;
+      uniform float electricIntensity;
+      uniform vec3 themeColors[5]; 
+      
+      attribute float size;
+      attribute float offset;
+      attribute float speed;
+      attribute float particleType;
+      
+      varying vec3 vColor;
+      varying float vAlpha;
+      varying float vParticleType;
+      varying float vAngle;
+      
+      ${noiseHelperFunctions}
+      
+      void main() {
+        vec3 pos = position;
+        vParticleType = particleType;
+        
+        float t = time * speed + offset;
+        vAngle = t * 10.0; 
+        
+        vec3 deepColor = themeColors[0];
+        vec3 baseColor = themeColors[1];
+        vec3 mainColor = themeColors[2];
+        vec3 accentColor = themeColors[3];
+        vec3 highlightColor = themeColors[4];
+        
+        if (particleType < 1.0) {
+          float flicker = hash(offset * 10.0 + floor(time * 20.0));
+          
+          if (hash(offset + floor(time * 10.0)) > 0.8) {
+            pos += normalize(position) * sin(t * 30.0) * 0.05 * electricIntensity;
+          }
+          
+          float orbitSpeed = speed * 2.0;
+          pos += vec3(
+            sin(t * orbitSpeed) * 0.03,
+            cos(t * orbitSpeed) * 0.03,
+            sin(t * orbitSpeed + 1.0) * 0.03
+          ) * electricIntensity;
+          
+          vColor = mix(baseColor, mainColor, hash(offset) * 0.7 + 0.3);
+          
+        } else if (particleType < 2.0) {
+          float noise = noise(vec3(offset * 5.0, time * 3.0, offset * 3.0));
+          
+          pos += normalize(position) * sin(t * 50.0) * 0.08 * electricIntensity;
+          pos += vec3(
+            sin(t * 7.0 + offset) * 0.04,
+            cos(t * 9.0 + offset * 2.0) * 0.04,
+            sin(t * 8.0 + offset * 1.5) * 0.04
+          ) * electricIntensity;
+          
+          vec3 dir = normalize(position);
+          pos -= dir * (sin(t * 8.0) * 0.05 * electricIntensity);
+          
+          vColor = mix(mainColor, accentColor, noise * 0.8 + 0.2);
+          
+        } else if (particleType < 3.0) {
+          float orbitSpeed = speed * 0.5;
+          pos += vec3(
+            sin(t * orbitSpeed) * 0.01,
+            cos(t * orbitSpeed) * 0.01,
+            sin(t * orbitSpeed + 1.0) * 0.01
+          );
+          
+          pos += normalize(position) * sin(t * 5.0) * 0.03;
+          
+          vColor = mix(accentColor, highlightColor, sin(t * 3.0) * 0.5 + 0.5);
+          
+        } else if (particleType < 4.0) {
+          if (hash(offset * 3.0 + floor(time * 5.0)) > 0.9) {
+            pos += vec3(
+              (hash(offset + time) - 0.5) * 0.2,
+              (hash(offset * 2.0 + time) - 0.5) * 0.2,
+              (hash(offset * 3.0 + time) - 0.5) * 0.2
+            ) * electricIntensity;
+          }
+          
+          pos += vec3(
+            sin(t * 20.0) * 0.02,
+            cos(t * 25.0) * 0.02,
+            sin(t * 22.0) * 0.02
+          ) * electricIntensity;
+          
+          vColor = mix(accentColor, highlightColor, 0.7);
+          
+        } else if (particleType < 5.0) {
+          float trail = fbm(vec3(
+            offset * 5.0 + time * 0.5,
+            offset * 5.0 - time * 0.7,
+            offset * 5.0 + time * 0.6
+          ));
+          
+          vec3 flowDir = vec3(
+            sin(position.y * 5.0 + time),
+            cos(position.z * 5.0 + time),
+            sin(position.x * 5.0 + time)
+          );
+          
+          pos += flowDir * 0.04 * electricIntensity;
+          
+          float circleSpeed = speed * 3.0;
+          pos += vec3(
+            sin(t * circleSpeed) * 0.02,
+            cos(t * circleSpeed) * 0.02,
+            0.0
+          );
+          
+          vColor = mix(mainColor, accentColor, trail);
+          
+        } else {
+          pos += vec3(
+            sin(t * 0.7) * 0.03,
+            cos(t * 0.5) * 0.03,
+            sin(t * 0.6) * 0.03
+          );
+          
+          float angle = t * 0.2;
+          float radius = 0.01;
+          pos.x += cos(angle) * radius;
+          pos.y += sin(angle) * radius;
+          
+          vColor = mix(deepColor, baseColor, 0.7 + 0.3 * sin(t));
+        }
+        
+        float flickerFreq;
+        float visibilityThreshold;
+        
+        if (particleType < 1.0) {
+          flickerFreq = 30.0;
+          visibilityThreshold = 0.4;
+        } else if (particleType < 2.0) {
+          flickerFreq = 50.0;
+          visibilityThreshold = 0.3;
+        } else if (particleType < 3.0) {
+          flickerFreq = 10.0;
+          visibilityThreshold = 0.2;
+        } else if (particleType < 4.0) {
+          flickerFreq = 20.0;
+          visibilityThreshold = 0.5;
+        } else if (particleType < 5.0) {
+          flickerFreq = 15.0;
+          visibilityThreshold = 0.3;
+        } else {
+          flickerFreq = 5.0;
+          visibilityThreshold = 0.2;
+        }
+        
+        float visibility = step(visibilityThreshold * (1.0 - arcFrequency * 0.5), 
+                                  hash(offset + floor(time * flickerFreq)));
+        visibility *= electricIntensity;
+        
+        float particleSize;
+        
+        if (particleType < 1.0) {
+          particleSize = size * visibility * (0.8 + hash(offset + time * 20.0) * 0.4);
+        } else if (particleType < 2.0) {
+          particleSize = size * visibility * (0.6 + hash(offset + time * 30.0) * 0.4);
+        } else if (particleType < 3.0) {
+          particleSize = size * visibility * (1.0 + sin(t * 8.0) * 0.5) * 1.5;
+        } else if (particleType < 4.0) {
+          particleSize = size * visibility * (0.7 + hash(offset + time * 10.0)) * 1.2;
+        } else if (particleType < 5.0) {
+          particleSize = size * visibility * (0.6 + sin(t * 5.0) * 0.3) * 0.9;
+        } else {
+          particleSize = size * visibility * (0.5 + sin(t * 3.0) * 0.2) * 0.7;
+        }
+        
+        if (particleType < 1.0) {
+          vAlpha = visibility * (0.3 + 0.7 * hash(offset + time * 40.0));
+        } else if (particleType < 2.0) {
+          vAlpha = visibility * (0.4 + 0.6 * hash(offset + time * 60.0));
+        } else if (particleType < 3.0) {
+          vAlpha = visibility * (0.3 + 0.7 * sin(t * 8.0));
+        } else if (particleType < 4.0) {
+          vAlpha = visibility * (0.5 + 0.5 * hash(offset + time * 30.0));
+        } else if (particleType < 5.0) {
+          vAlpha = visibility * (0.2 + 0.8 * sin(t * 5.0));
+        } else {
+          vAlpha = visibility * (0.1 + 0.3 * sin(t * 2.0));
+        }
+        
+        vAlpha *= electricIntensity;
+        
+        vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        gl_PointSize = particleSize * (300.0 / -mvPosition.z);
+      }
+    `,
+                fragmentShader: `
+      uniform vec3 themeColors[5]; 
+      
+      varying vec3 vColor;
+      varying float vAlpha;
+      varying float vParticleType;
+      varying float vAngle;
+      
+      void main() {
+        vec2 center = gl_PointCoord - vec2(0.5);
+        float dist = length(center);
+        
+        float strength;
+        
+        if (vParticleType < 1.0) {
+          strength = 1.0 - smoothstep(0.2, 0.5, dist);
+        } else if (vParticleType < 2.0) {
+          strength = 1.0 - smoothstep(0.1, 0.4, dist);
+          float streakDir = abs(center.x - center.y * sign(sin(vAngle)));
+          if (streakDir < 0.2) {
+            strength = mix(strength, 1.2, (0.2 - streakDir) * 5.0);
+          }
+        } else if (vParticleType < 3.0) {
+          float innerDist = smoothstep(0.0, 0.2, dist);
+          float outerGlow = 1.0 - smoothstep(0.3, 0.5, dist);
+          strength = mix(innerDist, outerGlow, 0.7);
+        } else if (vParticleType < 4.0) {
+          strength = 1.0 - smoothstep(0.0, 0.5, dist);
+          if (dist < 0.2) {
+            strength = mix(strength, 2.0, 1.0 - dist * 5.0);
+          }
+          float trailDir = dot(normalize(center), vec2(cos(vAngle), sin(vAngle)));
+          if (trailDir > 0.3 && dist < 0.4) {
+            strength = mix(strength, 1.5, (trailDir - 0.3) * 2.0);
+          }
+        } else if (vParticleType < 5.0) {
+          vec2 stretched = vec2(center.x, center.y * 1.5);
+          float stretchDist = length(stretched);
+          strength = 1.0 - smoothstep(0.1, 0.4, stretchDist);
+          strength *= (0.7 + 0.3 * sin(center.x * 10.0 + vAngle));
+        } else {
+          strength = 1.0 - smoothstep(0.0, 0.4, dist);
+          strength *= 0.7;
+        }
+        
+        float alpha = strength * vAlpha;
+        
+        if (alpha < 0.01) discard;
+        
+        gl_FragColor = vec4(vColor, alpha);
+      }
+    `
+            };
+
+            const material = new THREE.ShaderMaterial({
+                uniforms: particleShader.uniforms,
+                vertexShader: particleShader.vertexShader,
+                fragmentShader: particleShader.fragmentShader,
+                transparent: true,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending
+            });
+
+            return new THREE.Points(geometry, material);
+        }
+
+        const lightningBolts = createLightningBolts();
+        const chainLightning = createChainLightning();
+        const electricParticles = createElectricParticles();
+        scene.add(lightningBolts);
+        scene.add(chainLightning);
+        scene.add(electricParticles);
+
+        const composer = new THREE.EffectComposer(renderer);
+        const renderPass = new THREE.RenderPass(scene, camera);
+        composer.addPass(renderPass);
+
+        const bloomPass = new THREE.UnrealBloomPass(
+            new THREE.Vector2(window.innerWidth, window.innerHeight),
+            1.2,
+            0.4,
+            0.2
+        );
+        composer.addPass(bloomPass);
+
+        const chromaticAberrationShader = {
+            uniforms: {
+                tDiffuse: { value: null },
+                amount: { value: 0.003 },
+                time: { value: 0 }
+            },
+            vertexShader: `
+    varying vec2 vUv;
+    
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+            fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float amount;
+    uniform float time;
+    
+    varying vec2 vUv;
+    
+    void main() {
+      float dynamic = amount * (1.0 + sin(time * 3.0) * 0.2);
+      
+      vec2 center = vUv - 0.5;
+      vec2 direction = normalize(center);
+      
+      float distFromCenter = length(center);
+      float falloff = smoothstep(0.0, 0.6, distFromCenter);
+      vec2 offset = direction * dynamic * falloff;
+      
+      vec4 cr = texture2D(tDiffuse, vUv + offset);
+      vec4 cg = texture2D(tDiffuse, vUv);
+      vec4 cb = texture2D(tDiffuse, vUv - offset);
+      
+      gl_FragColor = vec4(cr.r, cg.g, cb.b, cg.a);
+    }
+  `
+        };
+
+        const chromaticAberrationPass = new THREE.ShaderPass(chromaticAberrationShader);
+        composer.addPass(chromaticAberrationPass);
+
+        // 🟢 CÁMARA ALEJADA A Z=16 PARA HACER LA ESFERA MÁS PEQUEÑA
+        camera.position.z = 10;
+
+        function activateLightningBolt(boltGroup) {
+            const mainBolt = boltGroup.children[0];
+            mainBolt.userData.age = 0;
+            mainBolt.userData.active = true;
+            mainBolt.visible = true;
+
+            mainBolt.material.opacity = 0.6 + Math.random() * 0.4;
+
+            for (let i = 1; i < boltGroup.children.length; i++) {
+                const branch = boltGroup.children[i];
+
+                setTimeout(() => {
+                    branch.userData.age = 0;
+                    branch.userData.active = true;
+                    branch.visible = true;
+                    branch.material.opacity = 0.4 + Math.random() * 0.4;
+                }, Math.random() * 70);
+            }
+        }
+
+        function activateChainLightning(chain) {
+            chain.userData.age = 0;
+            chain.userData.active = true;
+            chain.visible = true;
+            chain.material.opacity = 0.5 + Math.random() * 0.3;
+        }
+
+        function onMouseMove(event) {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            mouseSpeed.x = mouse.x - lastMousePosition.x;
+            mouseSpeed.y = mouse.y - lastMousePosition.y;
+
+            lastMousePosition.x = mouse.x;
+            lastMousePosition.y = mouse.y;
+
+            targetRotation.x = mouse.y * 0.8;
+            targetRotation.y = mouse.x * 0.8;
+        }
+
+        function onTouchMove(event) {
+            if (event.touches.length === 1) {
+                event.preventDefault();
+
+                const touch = event.touches[0];
+                onMouseMove({
+                    clientX: touch.clientX,
+                    clientY: touch.clientY
+                });
+            }
+        }
+
+        function onMouseDown() {
+            mouseInfluence += 2.5;
+
+            const flashElement = document.createElement('div');
+            flashElement.style.position = 'fixed';
+            flashElement.style.top = 0;
+            flashElement.style.left = 0;
+            flashElement.style.width = '100%';
+            flashElement.style.height = '100%';
+            flashElement.style.backgroundColor = `rgba(${colors.accentColor.r * 255 * 0.7}, ${colors.accentColor.g * 255 * 0.7}, ${colors.accentColor.b * 255 * 1.2}, 0.15)`;
+            flashElement.style.pointerEvents = 'none';
+            flashElement.style.zIndex = 1000;
+            flashElement.style.transition = 'opacity 200ms cubic-bezier(0.215, 0.61, 0.355, 1)';
+            document.body.appendChild(flashElement);
+
+            setTimeout(() => {
+                flashElement.style.opacity = 0;
+                setTimeout(() => {
+                    document.body.removeChild(flashElement);
+                }, 200);
+            }, 20);
+
+            const originalBloomStrength = bloomPass.strength;
+            bloomPass.strength = originalBloomStrength * 2.5;
+
+            const bloomStartTime = Date.now();
+            const bloomDuration = 400;
+            const animateBloom = function () {
+                const elapsed = Date.now() - bloomStartTime;
+                if (elapsed < bloomDuration) {
+                    const t = elapsed / bloomDuration;
+                    const ease = 1 - Math.pow(1 - t, 3);
+                    bloomPass.strength = originalBloomStrength * (1 + 1.5 * (1 - ease));
+                    requestAnimationFrame(animateBloom);
+                } else {
+                    bloomPass.strength = originalBloomStrength;
+                }
+            };
+            requestAnimationFrame(animateBloom);
+
+            const originalAberration = chromaticAberrationPass.uniforms.amount.value;
+            chromaticAberrationPass.uniforms.amount.value = originalAberration * 4.0;
+
+            const aberrationStartTime = Date.now();
+            const aberrationDuration = 350;
+            const animateAberration = function () {
+                const elapsed = Date.now() - aberrationStartTime;
+                if (elapsed < aberrationDuration) {
+                    const t = elapsed / aberrationDuration;
+                    const ease = 1 - Math.pow(1 - t, 3);
+                    chromaticAberrationPass.uniforms.amount.value = originalAberration * (1 + 3.0 * (1 - ease));
+                    requestAnimationFrame(animateAberration);
+                } else {
+                    chromaticAberrationPass.uniforms.amount.value = originalAberration;
+                }
+            };
+            requestAnimationFrame(animateAberration);
+
+            const allBolts = [...lightningBolts.children].sort(() => 0.5 - Math.random());
+            const maxBolts = Math.min(25, allBolts.length);
+
+            for (let i = 0; i < maxBolts; i++) {
+                setTimeout(() => {
+                    activateLightningBolt(allBolts[i]);
+
+                    const mainBolt = allBolts[i].children[0];
+                    if (mainBolt) {
+                        mainBolt.material.opacity = 1.0;
+                        mainBolt.material.color.set(colors.highlightColor);
+                        mainBolt.userData.lifetime = 1.0 + Math.random() * 0.5;
+                    }
+
+                    for (let j = 1; j < allBolts[i].children.length; j++) {
+                        const branch = allBolts[i].children[j];
+                        if (branch) {
+                            branch.material.opacity = 0.9 + Math.random() * 0.1;
+                            branch.userData.lifetime = 0.6 + Math.random() * 0.3;
+
+                            if (Math.random() > 0.7) {
+                                branch.material.color.set(colors.accentColor);
+                            }
+                        }
+                    }
+                }, i * 15);
+            }
+
+            const allChains = [...chainLightning.children].sort(() => 0.5 - Math.random());
+            const maxChains = Math.min(30, allChains.length);
+
+            for (let i = 0; i < maxChains; i++) {
+                setTimeout(() => {
+                    activateChainLightning(allChains[i]);
+
+                    allChains[i].material.opacity = 1.0;
+                    allChains[i].userData.lifetime = 0.7 + Math.random() * 0.3;
+
+                    if (Math.random() > 0.7) {
+                        allChains[i].material.color.set(colors.highlightColor);
+                    }
+                }, i * 20 + 50);
+            }
+
+            setTimeout(() => {
+                const remainingBolts = [...allBolts].sort(() => 0.5 - Math.random()).slice(0, 15);
+
+                for (let i = 0; i < remainingBolts.length; i++) {
+                    setTimeout(() => {
+                        activateLightningBolt(remainingBolts[i]);
+
+                        const mainBolt = remainingBolts[i].children[0];
+                        if (mainBolt) {
+                            const mixedColor = new THREE.Color().lerpColors(colors.mainColor, colors.highlightColor, 0.7);
+                            mainBolt.material.color.set(mixedColor);
+                            mainBolt.userData.lifetime = 0.5 + Math.random() * 0.3;
+                        }
+                    }, i * 25);
+                }
+            }, 400);
+        }
+
+        window.addEventListener('mousemove', onMouseMove, false);
+        window.addEventListener('touchmove', onTouchMove, false);
+        window.addEventListener('mousedown', onMouseDown, false);
+        window.addEventListener('touchstart', onMouseDown, false);
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        function animate(time) {
+            requestAnimationFrame(animate);
+
+            const deltaTime = time * 0.001;
+
+            // 🟢 MATEMÁTICA DE LATIDO PARA EL AUDIO DE PYTHON
+            currentVolume += (targetVolume - currentVolume) * 0.15;
+            
+            // 🟢 REDUCCIÓN DE ESCALA MÁXIMA PARA EVITAR QUE SE DESBORDE
+            let dynamicScale = 1.0 + (currentVolume * 0.15); 
+            
+            if (typeof electricSphere !== 'undefined') {
+                electricSphere.scale.set(dynamicScale, dynamicScale, dynamicScale);
+                // 🟢 CENTRADO PERFECTO: Se quitó el offset de la izquierda
+                electricSphere.position.set(0, 0, 0); 
+            }
+            if (typeof lightningBolts !== 'undefined') lightningBolts.position.set(0, 0, 0);
+            if (typeof chainLightning !== 'undefined') chainLightning.position.set(0, 0, 0);
+            if (typeof electricParticles !== 'undefined') electricParticles.position.set(0, 0, 0);
+
+            settings.electricIntensity = 0.7 + (currentVolume * 2.5);
+            settings.glowStrength = 0.6 + currentVolume;
+            if (typeof bloomPass !== 'undefined') bloomPass.strength = 1.2 + (currentVolume * 2.0);
+
+            targetVolume += (0.0 - targetVolume) * 0.1;
+            
+            // Hacemos que gire constantemente y más rápido cuando te escucha
+            targetRotation.x += 0.005 * baseRotationSpeed;
+            targetRotation.y += 0.005 * baseRotationSpeed;
+
+            if (typeof electricMaterial !== 'undefined') {
+                electricMaterial.uniforms.time.value = deltaTime;
+                electricMaterial.uniforms.mouse.value.copy(mouse);
+                electricMaterial.uniforms.mouseInfluence.value = mouseInfluence;
+                electricMaterial.uniforms.electricIntensity.value = settings.electricIntensity;
+                electricMaterial.uniforms.arcFrequency.value = settings.arcFrequency;
+                electricMaterial.uniforms.glowStrength.value = settings.glowStrength;
+            }
+
+            if (typeof electricParticles !== 'undefined') {
+                electricParticles.material.uniforms.time.value = deltaTime;
+                electricParticles.material.uniforms.arcFrequency.value = settings.arcFrequency;
+                electricParticles.material.uniforms.electricIntensity.value = settings.electricIntensity;
+            }
+
+            if (typeof chromaticAberrationPass !== 'undefined') chromaticAberrationPass.uniforms.time.value = deltaTime;
+
+            const speed = Math.sqrt(mouseSpeed.x * mouseSpeed.x + mouseSpeed.y * mouseSpeed.y);
+
+            mouseInfluence *= 0.95;
+            mouseInfluence += speed * 3.0;
+            mouseInfluence = Math.min(mouseInfluence, 1.0);
+
+            currentRotation.x += (targetRotation.x - currentRotation.x) * 0.05;
+            currentRotation.y += (targetRotation.y - currentRotation.y) * 0.05;
+
+            if (typeof electricSphere !== 'undefined') {
+                electricSphere.rotation.x = currentRotation.x;
+                electricSphere.rotation.y = currentRotation.y;
+            }
+
+            const floatX = Math.sin(deltaTime * 0.5) * 0.08;
+            const floatY = Math.sin(deltaTime * 0.7) * 0.1;
+            const floatZ = Math.cos(deltaTime * 0.6) * 0.05;
+
+            if (typeof electricSphere !== 'undefined') {
+                electricSphere.position.y = floatY;
+                electricSphere.position.x = floatX; // 🟢 CENTRADO PERFECTO
+            }
+
+            if (settings.enableLightning && typeof lightningBolts !== 'undefined') {
+                lightningBolts.children.forEach(boltGroup => {
+                    const mainBolt = boltGroup.children[0];
+
+                    if (mainBolt.userData.active) {
+                        mainBolt.userData.age += 0.016;
+
+                        const progress = mainBolt.userData.age / mainBolt.userData.lifetime;
+                        const fade = 1.0 - Math.pow(progress, 1.5);
+                        mainBolt.material.opacity = fade;
+
+                        if (mainBolt.userData.age >= mainBolt.userData.lifetime) {
+                            mainBolt.userData.active = false;
+                            mainBolt.visible = false;
+                        }
+                    } else if (Math.random() > 0.995 && settings.arcFrequency > 0.4) {
+                        activateLightningBolt(boltGroup);
+                    }
+
+                    for (let i = 1; i < boltGroup.children.length; i++) {
+                        const branch = boltGroup.children[i];
+
+                        if (branch.userData.active) {
+                            branch.userData.age += 0.016;
+
+                            const progress = branch.userData.age / branch.userData.lifetime;
+                            const fade = 0.8 - Math.pow(progress, 1.2);
+                            branch.material.opacity = Math.max(0, fade);
+
+                            if (branch.userData.age >= branch.userData.lifetime) {
+                                branch.userData.active = false;
+                                branch.visible = false;
+                            }
+                        }
+                    }
+                });
+            }
+
+            if (settings.enableChainLightning && typeof chainLightning !== 'undefined') {
+                chainLightning.children.forEach(chain => {
+                    if (chain.userData.active) {
+                        chain.userData.age += 0.016;
+
+                        const progress = chain.userData.age / chain.userData.lifetime;
+                        const fade = 0.8 - Math.pow(progress, 1.2);
+
+                        const flicker = 0.9 + 0.1 * Math.sin(deltaTime * 70.0 + chain.userData.startNodeIndex * 10);
+                        chain.material.opacity = Math.max(0, fade * flicker);
+
+                        if (chain.userData.age >= chain.userData.lifetime) {
+                            chain.userData.active = false;
+                            chain.visible = false;
+                        }
+                    } else if (Math.random() > 0.997 && settings.arcFrequency > 0.5) {
+                        activateChainLightning(chain);
+                    }
+                });
+            }
+
+            if (mouseInfluence > 0.7 && Math.random() > 0.85 && settings.enableLightning) {
+                const randomBolt = lightningBolts.children[Math.floor(Math.random() * lightningBolts.children.length)];
+                activateLightningBolt(randomBolt);
+
+                if (settings.enableChainLightning && Math.random() > 0.4) {
+                    const randomChain = chainLightning.children[Math.floor(Math.random() * chainLightning.children.length)];
+                    activateChainLightning(randomChain);
+                }
+            }
+
+            mouseSpeed.multiplyScalar(0.95);
+
+            composer.render();
+        }
+
+        animate(0);
     </script>
 </body>
+
 </html>
