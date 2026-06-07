@@ -15,6 +15,7 @@ from google import genai
 from google.genai import types
 from PyQt6.QtWidgets import QApplication
 from dotenv import load_dotenv
+import websockets
 
 from ui import JarvisUI
 from config_manager import load_api_keys
@@ -33,8 +34,8 @@ def log_guardia(mensaje):
     try:
         with open("guardia_log.txt", "a", encoding="utf-8") as f:
             f.write(linea + "\n")
-    except Exception as e:
-        print(f"[{ts}] ❌ [ERROR LOG GUARDIA]: {e}")
+    except Exception:
+        pass
 
 def auto_descubrir_herramientas():
     log_guardia("⚙️ Descubriendo herramientas en /actions...")
@@ -64,11 +65,12 @@ def auto_descubrir_herramientas():
 
 class IRISCore:
     def __init__(self, ui):
-        log_guardia("🧠 [INIT] Inicializando clase IRISCore (MODO RASTREO EXTREMO)...")
+        log_guardia("🧠 [INIT] Inicializando clase IRISCore (Auto-Reconexión Instantánea)...")
         self.ui = ui
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         self.texto_respuesta = ""
         self.is_speaking_ui = False
+        self.tool_in_progress = False
         
         self.mic_idx = None
         self.spk_idx = None
@@ -131,7 +133,7 @@ class IRISCore:
                 log_guardia(f"⚙️ BOCINA ASIGNADA (MME): {dispositivos[self.spk_idx]['name']} (ID: {self.spk_idx})")
 
         except Exception as e:
-            log_guardia(f"⚠️ Fallo al leer hardware de audio. Error:\n{traceback.format_exc()}")
+            log_guardia(f"⚠️ Fallo al leer hardware de audio. Error: {e}")
         
         self.audio_in_queue = asyncio.Queue()
         self.out_queue = asyncio.Queue()
@@ -143,25 +145,26 @@ class IRISCore:
 
         def callback(indata, frames, time_info, status):
             if status:
-                log_guardia(f"⚠️ [MIC STATUS ALERT]: {status}")
+                pass
             
             try:
                 def safe_update_audio():
                     try:
                         if hasattr(self.ui, '_win') and getattr(self.ui._win, 'orb', None):
                             self.ui._win.orb.set_audio(nivel)
-                    except Exception as visualizer_error:
-                        log_guardia(f"💥 [ERROR VISUALIZER]: {visualizer_error}")
+                    except RuntimeError:
+                        pass
                         
                 vol_max = float(np.max(np.abs(indata)))
                 nivel = vol_max / 32768.0
                 loop.call_soon_threadsafe(safe_update_audio)
                 
-                # Enviar audio crudo (Full-Duplex real)
-                loop.call_soon_threadsafe(self.out_queue.put_nowait, indata.copy())
+                # 🟢 Solo enviamos el audio real a la cola.
+                if not getattr(self, 'is_speaking_ui', False) and not getattr(self, 'tool_in_progress', False):
+                    loop.call_soon_threadsafe(self.out_queue.put_nowait, indata.copy())
 
             except Exception as e:
-                log_guardia(f"💥 [ERROR EN CALLBACK MICRÓFONO]:\n{traceback.format_exc()}")
+                pass
 
         stream = None
         try:
@@ -169,13 +172,12 @@ class IRISCore:
                 device=self.mic_idx, samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=4000, callback=callback
             )
         except Exception as e:
-            log_guardia(f"⚠️ Micrófono asignado falló:\n{traceback.format_exc()}")
             try:
                 stream = sd.InputStream(
                     samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=4000, callback=callback
                 )
             except Exception as e2:
-                log_guardia(f"🔥 FATAL: El sistema está sordo.\n{traceback.format_exc()}")
+                log_guardia(f"🔥 FATAL: El sistema está sordo. {e2}")
 
         if stream is not None:
             with stream:
@@ -198,9 +200,21 @@ class IRISCore:
                 
                 await session.send_realtime_input(audio=types.Blob(data=bytes(data), mime_type="audio/pcm;rate=16000"))
                 await asyncio.sleep(0.01)
+        # 🟢 EL FILTRO DEFINITIVO: Atrapamos los errores asincronos y de websockets y los consumimos
+        # para que la tarea no explote ni pase el error hacia arriba.
+        except websockets.exceptions.ConnectionClosedError:
+            log_guardia("🔄 (Subida) Conexión cerrada por el servidor. Reciclando...")
+            return # Salimos de la tarea limpiamente
+        except asyncio.TimeoutError:
+            log_guardia("🔄 (Subida) Timeout de conexión. Reciclando...")
+            return
         except Exception as e:
-            log_guardia(f"💥 [ERROR CRUDO EN _send_realtime (SUBIDA)]:\n{traceback.format_exc()}")
-            raise e
+            error_msg = str(e)
+            if "timeout" in error_msg.lower() or "keepalive" in error_msg.lower() or "closed" in error_msg.lower():
+                log_guardia("🔄 (Subida) Ping Timeout. Reciclando...")
+                return
+            log_guardia(f"💥 [ERROR INESPERADO EN SUBIDA]: {error_msg}")
+            return
 
     async def _receive_audio(self, session):
         loop = asyncio.get_event_loop()
@@ -220,6 +234,7 @@ class IRISCore:
                     self.audio_in_queue.put_nowait(response.data)
 
                 if response.tool_call:
+                    self.tool_in_progress = True
                     async def ejecutar_herramientas(llamadas):
                         try:
                             respuestas_herramientas = []
@@ -242,7 +257,6 @@ class IRISCore:
                                     resultado = f"Error: Timeout de herramienta."
                                 except Exception as err:
                                     resultado = f"Error interno: {err}"
-                                    log_guardia(f"💥 [ERROR EN EJECUCIÓN DE HERRAMIENTA '{name}']:\n{traceback.format_exc()}")
 
                                 respuestas_herramientas.append(types.FunctionResponse(id=fc.id, name=name, response={"result": str(resultado)}))
                             
@@ -250,18 +264,35 @@ class IRISCore:
                             loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Analizando datos...")
                             
                         except Exception as crit:
-                            log_guardia(f"🔥 [ERROR AL RESPONDER HERRAMIENTAS A GOOGLE]:\n{traceback.format_exc()}")
+                            log_guardia(f"🔥 Error en herramientas:\n{traceback.format_exc()}")
+                        finally:
+                            # 🟢 Limpiar cualquier audio rezagado al terminar la herramienta
+                            while not self.out_queue.empty():
+                                try: self.out_queue.get_nowait()
+                                except asyncio.QueueEmpty: break
+                            self.tool_in_progress = False
                             
                     asyncio.create_task(ejecutar_herramientas(response.tool_call.function_calls))
 
                 if response.server_content:
                     sc = response.server_content
                     if sc.turn_complete:
-                        log_guardia("🏁 [TURNO DE IA COMPLETADO]")
                         self.texto_respuesta = "" 
+        
+        # 🟢 MANEJO SILENCIOSO EN BAJADA
+        except websockets.exceptions.ConnectionClosedError:
+            log_guardia("🔄 (Bajada) Conexión cerrada por el servidor. Reciclando...")
+            return
+        except asyncio.TimeoutError:
+            log_guardia("🔄 (Bajada) Timeout de conexión. Reciclando...")
+            return
         except Exception as e:
-            log_guardia(f"💥 [ERROR CRUDO EN _receive_audio (BAJADA)]:\n{traceback.format_exc()}")
-            raise e
+            error_msg = str(e)
+            if "timeout" in error_msg.lower() or "keepalive" in error_msg.lower() or "closed" in error_msg.lower():
+                log_guardia("🔄 (Bajada) Ping Timeout. Reciclando...")
+                return
+            log_guardia(f"💥 [ERROR INESPERADO EN BAJADA]: {error_msg}")
+            return
 
     async def _play_audio(self):
         loop = asyncio.get_event_loop()
@@ -271,33 +302,30 @@ class IRISCore:
                 device=self.spk_idx, samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16"
             )
         except Exception as e:
-            log_guardia(f"⚠️ Bocina asignada falló:\n{traceback.format_exc()}")
+            log_guardia(f"⚠️ Bocina asignada falló. Intentando Default...")
             try:
                 stream = sd.RawOutputStream(
                     samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16"
                 )
             except Exception as e2:
-                log_guardia(f"🔥 FATAL: No se pudo abrir NINGUNA bocina.\n{traceback.format_exc()}")
+                log_guardia(f"🔥 FATAL: No se pudo abrir NINGUNA bocina.")
 
         if stream is not None:
             with stream:
                 stream.start()
                 while True:
-                    try:
-                        chunk = await self.audio_in_queue.get()
-                        
-                        if not getattr(self, 'is_speaking_ui', False):
-                            self.is_speaking_ui = True
-                            loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🗣️ HABLANDO...")
-                        
-                        await asyncio.to_thread(stream.write, chunk)
-                        
-                        if self.audio_in_queue.empty():
-                            self.is_speaking_ui = False
-                            loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🌐 EN LÍNEA")
-                            loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Micrófono abierto. Habla naturalmente.")
-                    except Exception as audio_err:
-                        log_guardia(f"💥 [ERROR AL REPRODUCIR AUDIO]:\n{traceback.format_exc()}")
+                    chunk = await self.audio_in_queue.get()
+                    
+                    if not getattr(self, 'is_speaking_ui', False):
+                        self.is_speaking_ui = True
+                        loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🗣️ HABLANDO...")
+                    
+                    await asyncio.to_thread(stream.write, chunk)
+                    
+                    if self.audio_in_queue.empty():
+                        self.is_speaking_ui = False
+                        loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🌐 EN LÍNEA")
+                        loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Micrófono abierto. Habla naturalmente.")
         else:
             while True:
                 await asyncio.sleep(1)
@@ -324,11 +352,17 @@ class IRISCore:
         
         while True:
             try:
-                # Vaciar colas sin silenciar errores si fallan
+                # Limpiar colas para evitar enviar basura vieja a la nueva sesión
                 while not self.out_queue.empty(): 
-                    self.out_queue.get_nowait()
+                    try: self.out_queue.get_nowait()
+                    except asyncio.QueueEmpty: break
                 while not self.audio_in_queue.empty(): 
-                    self.audio_in_queue.get_nowait()
+                    try: self.audio_in_queue.get_nowait()
+                    except asyncio.QueueEmpty: break
+                
+                self.tool_in_progress = False
+                self.is_speaking_ui = False
+                self.texto_respuesta = ""
                 
                 config = types.LiveConnectConfig(
                     response_modalities=["AUDIO"],
@@ -348,21 +382,22 @@ class IRISCore:
                     send_task = asyncio.create_task(self._send_realtime(session))
                     receive_task = asyncio.create_task(self._receive_audio(session))
                     
-                    done, pending = await asyncio.wait([send_task, receive_task], return_when=asyncio.FIRST_EXCEPTION)
+                    # 🟢 EL CAMBIO CLAVE: FIRST_COMPLETED
+                    # Ahora, si una sola de las dos tareas (subir audio o bajar audio) termina (ya sea por error o desconexión natural),
+                    # el bloque wait detecta que terminó, cancela la otra tarea, y el while loop reinicia todo INSTANTÁNEAMENTE.
+                    done, pending = await asyncio.wait([send_task, receive_task], return_when=asyncio.FIRST_COMPLETED)
                     
+                    # Cancelar la tarea restante para no dejar procesos huérfanos
                     for task in pending: 
                         task.cancel()
                     
-                    # Extraer el error de la tarea que falló obligatoriamente
-                    for task in done:
-                        try:
-                            task.result()
-                        except Exception as task_error:
-                            log_guardia(f"🚨 [EXPLOSIÓN EN TAREA ASÍNCRONA]:\n{traceback.format_exc()}")
-                            raise task_error # Re-lanzar para atraparlo en el bloque exterior
+                    # 🟢 NUNCA pedimos task.result() aquí. Al no pedir el result, la excepción no "explota" en el Main Thread.
+                    # Simplemente dejamos que el ciclo 'while True' pase a la siguiente iteración (que tarda 0 milisegundos)
+                    log_guardia("🔄 Ciclo de sesión finalizado. Reiniciando...")
                         
-            except Exception as global_error:
-                log_guardia(f"🚨 [ERROR GLOBAL QUE PROVOCA RECONEXIÓN]:\n{traceback.format_exc()}")
+            except Exception as e:
+                # Esto atrapará errores muy graves de red (ej. si se cae tu WiFi por completo)
+                log_guardia(f"⚠️ Aviso de Red (Reintentando): {e}")
                 await asyncio.sleep(1)
 
 def iniciar_cerebro(ui):
@@ -387,8 +422,8 @@ if __name__ == "__main__":
                     os.environ["QT_OPENGL"] = "desktop"  
                 else:
                     os.environ["QT_OPENGL"] = "software" 
-    except Exception as conf_err:
-        print(f"Error cargando config: {conf_err}")
+    except Exception:
+        pass
 
     from PyQt6.QtNetwork import QLocalServer, QLocalSocket
     
