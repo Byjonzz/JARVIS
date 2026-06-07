@@ -6,11 +6,13 @@ import json
 import sys
 import threading
 import os
+import collections
 import importlib
 import datetime
 import traceback
 import numpy as np
 import sounddevice as sd
+from vosk import Model, KaldiRecognizer, SetLogLevel
 from google import genai
 from google.genai import types
 from PyQt6.QtWidgets import QApplication
@@ -65,12 +67,13 @@ def auto_descubrir_herramientas():
 
 class IRISCore:
     def __init__(self, ui):
-        log_guardia("🧠 [INIT] Inicializando clase IRISCore (Auto-Reconexión Instantánea)...")
+        log_guardia("🧠 [INIT] Inicializando clase IRISCore (Vosk Gatekeeper Activo)...")
         self.ui = ui
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         self.texto_respuesta = ""
         self.is_speaking_ui = False
         self.tool_in_progress = False
+        self.mic_abierto = False # 🟢 EL CADENERO
         
         self.mic_idx = None
         self.spk_idx = None
@@ -134,6 +137,13 @@ class IRISCore:
 
         except Exception as e:
             log_guardia(f"⚠️ Fallo al leer hardware de audio. Error: {e}")
+            
+        log_guardia("🧠 [INIT] Cargando modelo Vosk para STT local...")
+        SetLogLevel(-1)
+        self.vosk_model = Model("vosk_model")
+        self.recognizer = KaldiRecognizer(self.vosk_model, SEND_SAMPLE_RATE)
+        self.ALIAS = ["iris", "yris", "iriz", "yriz", "jarvis", "yarbis", "yarvis"]
+        self.audio_buffer = collections.deque(maxlen=15)
         
         self.audio_in_queue = asyncio.Queue()
         self.out_queue = asyncio.Queue()
@@ -159,9 +169,42 @@ class IRISCore:
                 nivel = vol_max / 32768.0
                 loop.call_soon_threadsafe(safe_update_audio)
                 
-                # 🟢 Solo enviamos el audio real a la cola.
-                if not getattr(self, 'is_speaking_ui', False) and not getattr(self, 'tool_in_progress', False):
-                    loop.call_soon_threadsafe(self.out_queue.put_nowait, indata.copy())
+                data_bytes = bytes(indata)
+                
+                # Si ella está hablando o trabajando, inyectamos ceros ciegos a Google
+                if getattr(self, 'is_speaking_ui', False) or getattr(self, 'tool_in_progress', False):
+                    loop.call_soon_threadsafe(self.out_queue.put_nowait, b'\x00' * len(data_bytes))
+                    return
+
+                # 🟢 LÓGICA VOSK (EL CADENERO)
+                if not self.mic_abierto:
+                    self.audio_buffer.append(data_bytes)
+                    
+                    if self.recognizer.AcceptWaveform(data_bytes):
+                        res = json.loads(self.recognizer.Result())
+                        texto = res.get("text", "").lower()
+                    else:
+                        res = json.loads(self.recognizer.PartialResult())
+                        texto = res.get("partial", "").lower()
+                        
+                    if any(alias in texto for alias in self.ALIAS):
+                        self.mic_abierto = True
+                        log_guardia("✨ Wake-word detectado. Abriendo canal a Google...")
+                        import winsound
+                        winsound.PlaySound("SystemAsterisk", winsound.SND_ALIAS | winsound.SND_ASYNC)
+                        
+                        loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🌐 ESCUCHANDO")
+                        loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Te escucho...")
+                        
+                        for chunk in self.audio_buffer:
+                            loop.call_soon_threadsafe(self.out_queue.put_nowait, chunk)
+                        self.audio_buffer.clear()
+                    else:
+                        # Mandamos ceros a Google para mantener el Keep-Alive sin que nos escuche
+                        loop.call_soon_threadsafe(self.out_queue.put_nowait, b'\x00' * len(data_bytes))
+                else:
+                    # Micrófono abierto, Google escucha tu voz real
+                    loop.call_soon_threadsafe(self.out_queue.put_nowait, data_bytes)
 
             except Exception as e:
                 pass
@@ -177,7 +220,7 @@ class IRISCore:
                     samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=4000, callback=callback
                 )
             except Exception as e2:
-                log_guardia(f"🔥 FATAL: El sistema está sordo. {e2}")
+                log_guardia(f"🔥 FATAL: El sistema está sordo.")
 
         if stream is not None:
             with stream:
@@ -191,29 +234,12 @@ class IRISCore:
         try:
             while True:
                 chunk = await self.out_queue.get()
-                data = bytearray(chunk.tobytes())
-                while not self.out_queue.empty():
-                    try:
-                        data.extend(self.out_queue.get_nowait().tobytes())
-                    except asyncio.QueueEmpty:
-                        break
-                
-                await session.send_realtime_input(audio=types.Blob(data=bytes(data), mime_type="audio/pcm;rate=16000"))
-                await asyncio.sleep(0.01)
-        # 🟢 EL FILTRO DEFINITIVO: Atrapamos los errores asincronos y de websockets y los consumimos
-        # para que la tarea no explote ni pase el error hacia arriba.
+                await session.send_realtime_input(audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000"))
         except websockets.exceptions.ConnectionClosedError:
-            log_guardia("🔄 (Subida) Conexión cerrada por el servidor. Reciclando...")
-            return # Salimos de la tarea limpiamente
+            return 
         except asyncio.TimeoutError:
-            log_guardia("🔄 (Subida) Timeout de conexión. Reciclando...")
             return
-        except Exception as e:
-            error_msg = str(e)
-            if "timeout" in error_msg.lower() or "keepalive" in error_msg.lower() or "closed" in error_msg.lower():
-                log_guardia("🔄 (Subida) Ping Timeout. Reciclando...")
-                return
-            log_guardia(f"💥 [ERROR INESPERADO EN SUBIDA]: {error_msg}")
+        except Exception:
             return
 
     async def _receive_audio(self, session):
@@ -254,7 +280,7 @@ class IRISCore:
                                     else:
                                         resultado = f"No registrada: {name}"
                                 except asyncio.TimeoutError:
-                                    resultado = f"Error: Timeout de herramienta."
+                                    resultado = f"Error: La búsqueda tardó demasiado."
                                 except Exception as err:
                                     resultado = f"Error interno: {err}"
 
@@ -266,7 +292,6 @@ class IRISCore:
                         except Exception as crit:
                             log_guardia(f"🔥 Error en herramientas:\n{traceback.format_exc()}")
                         finally:
-                            # 🟢 Limpiar cualquier audio rezagado al terminar la herramienta
                             while not self.out_queue.empty():
                                 try: self.out_queue.get_nowait()
                                 except asyncio.QueueEmpty: break
@@ -277,21 +302,28 @@ class IRISCore:
                 if response.server_content:
                     sc = response.server_content
                     if sc.turn_complete:
+                        # 🟢 LA LÓGICA DE CIERRE INTELIGENTE
+                        texto_limpio = self.texto_respuesta.strip()
+                        if "?" in texto_limpio or "¿" in texto_limpio:
+                            log_guardia("❓ I.R.I.S. hizo una pregunta. (Micrófono se queda Abierto)")
+                            self.mic_abierto = True
+                            loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🌐 ESCUCHANDO")
+                            loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Esperando tu respuesta...")
+                        else:
+                            log_guardia("🔇 Respuesta afirmativa. Cerrando micrófono local.")
+                            self.mic_abierto = False
+                            self.recognizer.Reset()
+                            self.audio_buffer.clear()
+                            loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🛡️ SUSPENSIÓN")
+                            loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Di 'Iris' para activar.")
+                        
                         self.texto_respuesta = "" 
         
-        # 🟢 MANEJO SILENCIOSO EN BAJADA
         except websockets.exceptions.ConnectionClosedError:
-            log_guardia("🔄 (Bajada) Conexión cerrada por el servidor. Reciclando...")
             return
         except asyncio.TimeoutError:
-            log_guardia("🔄 (Bajada) Timeout de conexión. Reciclando...")
             return
         except Exception as e:
-            error_msg = str(e)
-            if "timeout" in error_msg.lower() or "keepalive" in error_msg.lower() or "closed" in error_msg.lower():
-                log_guardia("🔄 (Bajada) Ping Timeout. Reciclando...")
-                return
-            log_guardia(f"💥 [ERROR INESPERADO EN BAJADA]: {error_msg}")
             return
 
     async def _play_audio(self):
@@ -302,7 +334,6 @@ class IRISCore:
                 device=self.spk_idx, samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16"
             )
         except Exception as e:
-            log_guardia(f"⚠️ Bocina asignada falló. Intentando Default...")
             try:
                 stream = sd.RawOutputStream(
                     samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16"
@@ -324,8 +355,14 @@ class IRISCore:
                     
                     if self.audio_in_queue.empty():
                         self.is_speaking_ui = False
-                        loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🌐 EN LÍNEA")
-                        loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Micrófono abierto. Habla naturalmente.")
+                        
+                        # Al terminar de hablar, actualizamos UI según el estado del micro
+                        if getattr(self, 'mic_abierto', False):
+                            loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🌐 ESCUCHANDO")
+                            loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Esperando tu respuesta...")
+                        else:
+                            loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🛡️ SUSPENSIÓN")
+                            loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Di 'Iris' para activar.")
         else:
             while True:
                 await asyncio.sleep(1)
@@ -340,19 +377,17 @@ class IRISCore:
         
         instruccion_base = (
             "Eres I.R.I.S., una asistente virtual femenina muy avanzada. Tu creador es Jonathan. "
-            "Estás operando en una llamada de audio continua, como si estuvieras en un chat telefónico. "
+            "Estás operando en un sistema de voz. "
             "REGLAS DE INTERACCIÓN: "
             "1. Responde SIEMPRE con rapidez y naturalidad. "
-            "2. Ignora ruidos de fondo o a personas hablando entre sí. Solo responde cuando el usuario se dirija a ti, diga tu nombre, o siga el hilo de la conversación. "
-            "3. Habla siempre en español. Sé concisa, servicial y usa un tono profesional pero amable. "
-            "4. Nunca te despidas con una pregunta."
+            "2. Habla siempre en español. Sé concisa, servicial y usa un tono profesional pero amable. "
         )
         
         loop = asyncio.get_event_loop()
         
         while True:
             try:
-                # Limpiar colas para evitar enviar basura vieja a la nueva sesión
+                # Si Google reconecta, mantenemos el estado del micrófono como estaba.
                 while not self.out_queue.empty(): 
                     try: self.out_queue.get_nowait()
                     except asyncio.QueueEmpty: break
@@ -370,35 +405,34 @@ class IRISCore:
                     tools=tools,
                     system_instruction=types.Content(parts=[types.Part.from_text(text=instruccion_base)]),
                 )
-
-                loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🔌 CONECTANDO...")
                 
                 async with self.client.aio.live.connect(model=MODEL, config=config) as session:
                     log_guardia("✅ Conexión con Gemini establecida.")
                     
-                    loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🌐 ESCUCHANDO")
-                    loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Micrófono abierto. Habla naturalmente.")
+                    # Refrescar UI sin cambiar el estado de Vosk
+                    if self.mic_abierto:
+                        loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🌐 ESCUCHANDO")
+                        loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Reconexión exitosa. Te escucho...")
+                    else:
+                        loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🛡️ SUSPENSIÓN")
+                        loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Di 'Iris' para activar.")
                     
                     send_task = asyncio.create_task(self._send_realtime(session))
                     receive_task = asyncio.create_task(self._receive_audio(session))
                     
-                    # 🟢 EL CAMBIO CLAVE: FIRST_COMPLETED
-                    # Ahora, si una sola de las dos tareas (subir audio o bajar audio) termina (ya sea por error o desconexión natural),
-                    # el bloque wait detecta que terminó, cancela la otra tarea, y el while loop reinicia todo INSTANTÁNEAMENTE.
                     done, pending = await asyncio.wait([send_task, receive_task], return_when=asyncio.FIRST_COMPLETED)
                     
-                    # Cancelar la tarea restante para no dejar procesos huérfanos
                     for task in pending: 
                         task.cancel()
-                    
-                    # 🟢 NUNCA pedimos task.result() aquí. Al no pedir el result, la excepción no "explota" en el Main Thread.
-                    # Simplemente dejamos que el ciclo 'while True' pase a la siguiente iteración (que tarda 0 milisegundos)
-                    log_guardia("🔄 Ciclo de sesión finalizado. Reiniciando...")
+                    for task in done:
+                        try:
+                            task.result()
+                        except Exception:
+                            pass
                         
             except Exception as e:
-                # Esto atrapará errores muy graves de red (ej. si se cae tu WiFi por completo)
-                log_guardia(f"⚠️ Aviso de Red (Reintentando): {e}")
-                await asyncio.sleep(1)
+                log_guardia("🔄 Reciclando conexión de forma invisible...")
+                await asyncio.sleep(0.1)
 
 def iniciar_cerebro(ui):
     try:
