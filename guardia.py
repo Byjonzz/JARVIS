@@ -19,31 +19,41 @@ sys.stdout.flush()
 SetLogLevel(-1)
 
 jarvis_en_pantalla = False
+audio_queue = queue.Queue()
 
 def lanzar_jarvis():
     global jarvis_en_pantalla
     
-    # Si el candado está puesto (la interfaz ya existe), ignoramos el doble teclazo
+    # Si ya está en pantalla, ignoramos cualquier intento de duplicar la UI
     if jarvis_en_pantalla:
         return
         
-    # Ponemos el candado
     jarvis_en_pantalla = True
     print("🚀 Lanzando UI Principal de JARVIS...")
     sys.stdout.flush()
     
-    # Lanzamiento de la interfaz
-    subprocess.run([sys.executable, "main.py"])
+    # Lanzamiento controlado de la interfaz
+    try:
+        subprocess.run([sys.executable, "main.py"])
+    except Exception as e:
+        print(f"❌ Error al ejecutar main.py: {e}")
+        sys.stdout.flush()
     
-    # Cuando la interfaz se cierra, el código llega aquí
     print("💤 UI cerrada por el usuario. Retomando guardia en 1 segundo...")
     sys.stdout.flush()
     time.sleep(1)
     
-    # Quitamos el candado para el futuro
+    # Limpiamos la cola de audio acumulada para evitar falsos disparos al regresar
+    while not audio_queue.empty():
+        try:
+            audio_queue.get_nowait()
+        except queue.Empty:
+            break
+            
     jarvis_en_pantalla = False
 
 def vigilar():
+    global jarvis_en_pantalla
     try:
         model = Model("vosk_model")
         print("✔️ Modelo Vosk cargado correctamente.")
@@ -53,36 +63,45 @@ def vigilar():
         sys.exit(1)
         
     recognizer = KaldiRecognizer(model, 16000)
-    audio_queue = queue.Queue()
 
     def callback(indata, frames, time_info, status):
-        audio_queue.put(bytes(indata))
+        # Solo encolamos audio si la UI no está abierta en pantalla
+        if not jarvis_en_pantalla:
+            audio_queue.put(bytes(indata))
 
-    # 🟢 Asignamos el atajo global
-    keyboard.add_hotkey('ctrl+shift+j', lanzar_jarvis)
+    # Asignamos el atajo global usando una función lambda segura
+    keyboard.add_hotkey('ctrl+shift+j', lambda: lanzar_jarvis())
     print("⌨️ Atajo global activado: Ctrl + Shift + J")
     sys.stdout.flush()
 
-    # Red fonética para entender "Jarvis" con cualquier acento
-    ALIAS_JARVIS = ["jarvis", "yarbis", "yarvis", "harvis", "charbis", "yarbys", "djarvis", "llarbis", "yervis"]
+    ALIAS_JARVIS = ["iris, ivis,"]
 
     while True:
         print("🛡️ Guardia en posición. Esperando voz o teclado...")
         sys.stdout.flush() 
         
-        with sd.RawInputStream(samplerate=16000, blocksize=8000, dtype='int16', channels=1, callback=callback):
+        # El stream se abre y se cierra limpiamente en cada ciclo de escucha activa
+        with sd.RawInputStream(samplerate=16000, blocksize=4000, dtype='int16', channels=1, callback=callback):
             despertar = False
-            while not despertar:
-                data = audio_queue.get()
+            while not despertar and not jarvis_en_pantalla:
+                try:
+                    # Timeout corto para revisar frecuentemente si la UI se activó por teclado
+                    data = audio_queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+
                 if recognizer.AcceptWaveform(data):
                     resultado = json.loads(recognizer.Result())
                     texto = resultado.get("text", "").lower()
                     
-                    # 🟢 Solo despertamos por voz si no hay candado puesto
                     if any(alias in texto for alias in ALIAS_JARVIS) and not jarvis_en_pantalla:
                         print(f"✨ ¡Despertar por voz detectado a las {time.strftime('%H:%M:%S')}!")
                         sys.stdout.flush()
                         despertar = True
 
-        if despertar:
+        # Si salimos del bloque "with", el micrófono se libera temporalmente
+        if despertar and not jarvis_en_pantalla:
             lanzar_jarvis()
+
+if __name__ == "__main__":
+    vigilar()
