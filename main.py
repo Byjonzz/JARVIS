@@ -6,11 +6,13 @@ import json
 import sys
 import threading
 import os
+import collections
 import importlib
 import datetime
 import traceback
 import numpy as np
 import sounddevice as sd
+from vosk import Model, KaldiRecognizer, SetLogLevel
 from google import genai
 from google.genai import types
 from PyQt6.QtWidgets import QApplication
@@ -65,54 +67,185 @@ def auto_descubrir_herramientas():
 
 class IRISCore:
     def __init__(self, ui):
-        log_guardia("🧠 [INIT] Inicializando clase IRISCore (Detección Contextual Pura)...")
+        log_guardia("🧠 [INIT] Inicializando clase IRISCore (Cronómetro de Silencio)...")
         self.ui = ui
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        self.texto_respuesta = ""
+        
+        self.texto_acumulado = "" 
+        self.tiempo_ultimo_texto = datetime.datetime.now() # 🟢 CRONÓMETRO
+        self.evaluando_turno = False
+        
         self.is_speaking_ui = False
         self.tool_in_progress = False
-        self.mic_abierto = True  # Inicia alerta
+        self.mic_abierto = False 
+        self.loop = None 
         
         self.mic_idx = None
         self.spk_idx = None
         
+        try:
+            dispositivos = sd.query_devices()
+            for i, d in enumerate(dispositivos):
+                if d['max_input_channels'] > 0:
+                    api_name = sd.query_hostapis(d['hostapi'])['name']
+                    if "MME" in api_name:
+                        nombre_mic = d['name'].upper()
+                        if "ASTRO" in nombre_mic and "GAME" in nombre_mic:
+                            self.mic_idx = i; break
+            if self.mic_idx is None:
+                for i, d in enumerate(dispositivos):
+                    if d['max_input_channels'] > 0 and "MME" in sd.query_hostapis(d['hostapi'])['name']:
+                        nombre_mic = d['name'].upper()
+                        if "ASTRO" in nombre_mic and "VOICE" not in nombre_mic:
+                            self.mic_idx = i; break
+            if self.mic_idx is None:
+                for i, d in enumerate(dispositivos):
+                    if d['max_input_channels'] > 0 and "MME" in sd.query_hostapis(d['hostapi'])['name']:
+                        self.mic_idx = i; break
+            
+            for i, d in enumerate(dispositivos):
+                if d['max_output_channels'] > 0:
+                    api_name = sd.query_hostapis(d['hostapi'])['name']
+                    if "MME" in api_name:
+                        nombre_spk = d['name'].upper()
+                        if "ASTRO" in nombre_spk and "GAME" in nombre_spk:
+                            self.spk_idx = i; break
+            if self.spk_idx is None:
+                for i, d in enumerate(dispositivos):
+                    if d['max_output_channels'] > 0 and "MME" in sd.query_hostapis(d['hostapi'])['name']:
+                        nombre_spk = d['name'].upper()
+                        if "ASTRO" in nombre_spk and "VOICE" not in nombre_spk:
+                            self.spk_idx = i; break
+            if self.spk_idx is None:
+                for i, d in enumerate(dispositivos):
+                    if d['max_output_channels'] > 0 and "MME" in sd.query_hostapis(d['hostapi'])['name']:
+                        self.spk_idx = i; break
+
+            if self.mic_idx is not None: log_guardia(f"⚙️ MICRÓFONO ASIGNADO: {dispositivos[self.mic_idx]['name']}")
+            if self.spk_idx is not None: log_guardia(f"⚙️ BOCINA ASIGNADA: {dispositivos[self.spk_idx]['name']}")
+        except Exception as e:
+            log_guardia(f"⚠️ Fallo hardware. Error: {e}")
+
+        log_guardia("🧠 [INIT] Cargando Vosk...")
+        SetLogLevel(-1)
+        try:
+            self.vosk_model = Model("vosk_model")
+            self.recognizer = KaldiRecognizer(self.vosk_model, SEND_SAMPLE_RATE)
+            self.WAKE_WORDS = {"iris", "yris", "iriz", "yriz", "jarvis"}
+        except Exception as e:
+            log_guardia(f"❌ Error crítico Vosk: {e}")
+        
+        self.audio_buffer = collections.deque(maxlen=15)
         self.audio_in_queue = asyncio.Queue()
         self.out_queue = asyncio.Queue()
-        log_guardia("🧠 [INIT] Clase IRISCore inicializada al 100%.")
+        log_guardia("🧠 [INIT] Sistema listo.")
+
+    def actualizar_ui_estado(self):
+        if not self.loop: return
+        
+        if getattr(self, 'mic_abierto', False):
+            self.loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🌐 ESCUCHANDO")
+            self.loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Micrófono abierto. Esperando tu respuesta...")
+        else:
+            self.loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🛡️ SUSPENSIÓN")
+            self.loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Micrófono desactivado, vuelve a decir Iris para llamar su atención")
+
+    # 🟢 LA NUEVA FUNCIÓN VIGILANTE POR TIEMPO
+    async def _vigilante_silencio(self):
+        while True:
+            await asyncio.sleep(0.5) # Revisa cada medio segundo
+            
+            # Si hay texto acumulado y han pasado 3 segundos desde la última letra recibida
+            if len(self.texto_acumulado) > 0 and not self.evaluando_turno:
+                tiempo_sin_texto = (datetime.datetime.now() - self.tiempo_ultimo_texto).total_seconds()
+                
+                # Si han pasado 3 segundos sin texto nuevo, significa que I.R.I.S terminó de hablar
+                if tiempo_sin_texto > 3.0:
+                    self.evaluando_turno = True
+                    texto = self.texto_acumulado.strip()
+                    log_guardia(f"🔎 Silencio de 3s detectado. Analizando frase final: '{texto}'")
+                    
+                    if "?" in texto or "¿" in texto:
+                        log_guardia(f"❓ PREGUNTA DETECTADA. Micrófono MANTIENE ABIERTO.")
+                        self.mic_abierto = True
+                    else:
+                        log_guardia(f"🔇 AFIRMACIÓN DETECTADA. CERRANDO micrófono.")
+                        self.mic_abierto = False
+                        if hasattr(self, 'recognizer'):
+                            self.recognizer.Reset()
+                            
+                    # Limpiamos todo para el siguiente turno
+                    self.texto_acumulado = ""
+                    self.evaluando_turno = False
+                    self.actualizar_ui_estado()
 
     async def _listen_audio(self):
-        log_guardia("🎤 Tarea _listen_audio iniciada.")
-        loop = asyncio.get_event_loop()
+        log_guardia("🎤 Escucha iniciada.")
 
         def callback(indata, frames, time_info, status):
             if status: pass
-            
             try:
-                # 1. Visualización (esto siempre debe funcionar)
+                def safe_update_audio():
+                    try:
+                        if hasattr(self.ui, '_win') and getattr(self.ui._win, 'orb', None):
+                            self.ui._win.orb.set_audio(nivel)
+                    except RuntimeError: pass
+                        
                 vol_max = float(np.max(np.abs(indata)))
                 nivel = vol_max / 32768.0
-                loop.call_soon_threadsafe(lambda: self.ui._win.orb.set_audio(nivel) if hasattr(self.ui, '_win') else None)
                 
-                # 2. EL INTERRUPTOR FÍSICO
-                # Si el micrófono está cerrado (mic_abierto == False), enviamos SILENCIO
+                if self.loop: self.loop.call_soon_threadsafe(safe_update_audio)
+                
+                data_bytes = bytes(indata)
+                
+                if getattr(self, 'is_speaking_ui', False) or getattr(self, 'tool_in_progress', False):
+                    if self.loop: self.loop.call_soon_threadsafe(self.out_queue.put_nowait, b'\x00' * len(data_bytes))
+                    return
+
                 if not getattr(self, 'mic_abierto', False):
-                    # Generamos el mismo tamaño de bytes pero con valores 0
-                    silencio = b'\x00' * len(indata.tobytes())
-                    loop.call_soon_threadsafe(self.out_queue.put_nowait, silencio)
+                    if self.loop: self.loop.call_soon_threadsafe(self.out_queue.put_nowait, b'\x00' * len(data_bytes))
+                    
+                    self.audio_buffer.append(data_bytes)
+                    if self.recognizer.AcceptWaveform(data_bytes):
+                        res = json.loads(self.recognizer.Result())
+                        texto = res.get("text", "").lower()
+                    else:
+                        res = json.loads(self.recognizer.PartialResult())
+                        texto = res.get("partial", "").lower()
+                        
+                    palabras_detectadas = set(texto.replace(",", "").replace(".", "").split())
+                    
+                    if self.WAKE_WORDS.intersection(palabras_detectadas):
+                        self.recognizer.Reset()
+                        self.mic_abierto = True
+                        # 🟢 Bloqueamos evaluación para no chocar con el vigilante
+                        self.evaluando_turno = True 
+                        self.texto_acumulado = ""
+                        self.evaluando_turno = False
+                        
+                        log_guardia(f"✨ Vosk escuchó Wake-word. Abriendo micrófono.")
+                        try:
+                            import winsound
+                            winsound.PlaySound("SystemAsterisk", winsound.SND_ALIAS | winsound.SND_ASYNC)
+                        except: pass
+                        
+                        self.actualizar_ui_estado()
+                        
+                        if self.loop:
+                            for chunk in self.audio_buffer:
+                                self.loop.call_soon_threadsafe(self.out_queue.put_nowait, chunk)
+                        self.audio_buffer.clear()
                 else:
-                    # Solo si está abierto enviamos tu voz real
-                    loop.call_soon_threadsafe(self.out_queue.put_nowait, indata.copy().tobytes())
+                    if self.loop: self.loop.call_soon_threadsafe(self.out_queue.put_nowait, data_bytes)
 
             except Exception as e:
-                log_guardia(f"Error en callback: {e}")
+                pass
 
         stream = None
         try:
-            stream = sd.InputStream(
-                samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=4000, callback=callback
-            )
-        except Exception as e:
-            log_guardia(f"🔥 FATAL: No se pudo inicializar el micrófono predeterminado. {e}")
+            stream = sd.InputStream(device=self.mic_idx, samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=4000, callback=callback)
+        except:
+            stream = sd.InputStream(samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=4000, callback=callback)
 
         if stream is not None:
             with stream:
@@ -124,10 +257,9 @@ class IRISCore:
         try:
             while True:
                 chunk = await self.out_queue.get()
-                data = bytearray(chunk.tobytes())
+                data = bytearray(chunk)
                 while not self.out_queue.empty():
-                    try:
-                        data.extend(self.out_queue.get_nowait().tobytes())
+                    try: data.extend(self.out_queue.get_nowait())
                     except asyncio.QueueEmpty: break
                 
                 await session.send_realtime_input(audio=types.Blob(data=bytes(data), mime_type="audio/pcm;rate=16000"))
@@ -136,7 +268,6 @@ class IRISCore:
         except Exception: return
 
     async def _receive_audio(self, session):
-        loop = asyncio.get_event_loop()
         try:
             async for response in session.receive():
                 if response.server_content and response.server_content.model_turn:
@@ -145,9 +276,12 @@ class IRISCore:
                             self.audio_in_queue.put_nowait(part.inline_data.data)
                         
                         if part.text:
-                            self.texto_respuesta += part.text
-                            texto_mostrar = self.texto_respuesta if len(self.texto_respuesta) < 70 else "..." + self.texto_respuesta[-65:]
-                            loop.call_soon_threadsafe(self.ui.puente.senal_transcripcion.emit, f"IRIS: {texto_mostrar}")
+                            # 🟢 Reiniciamos el cronómetro cada vez que llega una letra nueva
+                            self.tiempo_ultimo_texto = datetime.datetime.now()
+                            self.texto_acumulado += part.text
+                            
+                            texto_mostrar = self.texto_acumulado if len(self.texto_acumulado) < 70 else "..." + self.texto_acumulado[-65:]
+                            if self.loop: self.loop.call_soon_threadsafe(self.ui.puente.senal_transcripcion.emit, f"IRIS: {texto_mostrar}")
                                 
                 elif getattr(response, 'data', None):
                     self.audio_in_queue.put_nowait(response.data)
@@ -161,7 +295,7 @@ class IRISCore:
                                 name = fc.name
                                 args = dict(fc.args) if fc.args else {}
                                 log_guardia(f"⚙️ Ejecutando herramienta: {name}")
-                                loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, f"⚙️ Ejecutando: {name}...")
+                                if self.loop: self.loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, f"⚙️ Ejecutando: {name}...")
 
                                 try:
                                     if name in FUNCIONES_DISPONIBLES:
@@ -173,56 +307,32 @@ class IRISCore:
                                     else:
                                         resultado = f"No registrada: {name}"
                                 except asyncio.TimeoutError:
-                                    resultado = f"Error: La búsqueda tardó demasiado."
+                                    resultado = f"Error: Timeout."
                                 except Exception as err:
-                                    resultado = f"Error interno: {err}"
+                                    resultado = f"Error: {err}"
 
                                 respuestas_herramientas.append(types.FunctionResponse(id=fc.id, name=name, response={"result": str(resultado)}))
                             
                             await session.send_tool_response(function_responses=respuestas_herramientas)
-                            loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Analizando datos...")
-                            
-                        except Exception as crit:
-                            log_guardia(f"🔥 Error en herramientas:\n{traceback.format_exc()}")
-                        
-                        max_retry = 0
-                        while not self.out_queue.empty() and max_retry < 50:
-                            try: 
-                                self.out_queue.get_nowait()
-                                max_retry += 1
-                            except asyncio.QueueEmpty: break
-                        self.tool_in_progress = False
+                            if self.loop: self.loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Analizando datos...")
+                        except Exception: pass
+                        finally:
+                            while not self.out_queue.empty():
+                                try: self.out_queue.get_nowait()
+                                except asyncio.QueueEmpty: break
+                            self.tool_in_progress = False
                             
                     asyncio.create_task(ejecutar_herramientas(response.tool_call.function_calls))
-
-                if response.server_content:
-                    sc = response.server_content
-                    if sc.turn_complete:
-                        texto_final = self.texto_respuesta.strip()
-                        
-                        # Solo analizamos si hay texto real (evita falsos positivos por pausas cortas)
-                        if len(texto_final) > 0:
-                            if "?" in texto_final or "¿" in texto_final:
-                                log_guardia("❓ Respuesta es PREGUNTA. Estado Lógico: ABIERTO.")
-                                self.mic_abierto = True
-                            else:
-                                log_guardia("🔇 Respuesta es AFIRMACIÓN. Estado Lógico: SUSPENSIÓN.")
-                                self.mic_abierto = False
-                                
-                        self.texto_respuesta = "" 
         
         except (websockets.exceptions.ConnectionClosedError, asyncio.TimeoutError): return
         except Exception: return
 
     async def _play_audio(self):
-        loop = asyncio.get_event_loop()
         stream = None
         try:
-            stream = sd.RawOutputStream(
-                samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16"
-            )
-        except Exception as e:
-            log_guardia(f"🔥 FATAL: No se pudo abrir la bocina predeterminada. {e}")
+            stream = sd.RawOutputStream(device=self.spk_idx, samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16")
+        except:
+            stream = sd.RawOutputStream(samplerate=RECEIVE_SAMPLE_RATE, channels=CHANNELS, dtype="int16")
 
         if stream is not None:
             with stream:
@@ -232,44 +342,35 @@ class IRISCore:
                     
                     if not getattr(self, 'is_speaking_ui', False):
                         self.is_speaking_ui = True
-                        loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🗣️ HABLANDO...")
+                        if self.loop: self.loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🗣️ HABLANDO...")
                     
                     await asyncio.to_thread(stream.write, chunk)
                     
                     if self.audio_in_queue.empty():
                         self.is_speaking_ui = False
                         
-                        # 🟢 ACTUALIZACIÓN VISUAL INMEDIATA AL TERMINAR DE HABLAR
-                        if getattr(self, 'mic_abierto', True):
-                            loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🌐 ESCUCHANDO")
-                            loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Esperando tu respuesta...")
-                        else:
-                            loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🛡️ SUSPENSIÓN")
-                            loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Modo reposo. Di 'Iris' para llamar su atención.")
         else:
             while True: await asyncio.sleep(1)
 
     async def run(self):
+        self.loop = asyncio.get_event_loop() 
         log_guardia("🚀 [RUN] Iniciando ciclo principal asíncrono...")
         
         asyncio.create_task(self._listen_audio())
         asyncio.create_task(self._play_audio())
+        asyncio.create_task(self._vigilante_silencio()) # 🟢 NUEVO HILO VIGILANTE
         
         tools = [{"function_declarations": TOOL_DECLARATIONS}] if TOOL_DECLARATIONS else None
         
-        # 🟢 INSTRUCCIÓN PSICOLÓGICA PARA CONTROLAR EL FLUJO ABIERTO
         instruccion_base = (
             "Eres I.R.I.S., una asistente virtual femenina muy avanzada. Tu creador es Jonathan. "
-            "Estás operando en un canal de audio continuo 24/7. "
-            "REGLAS DE CONVERSACIÓN ESTRICTAS: "
-            "1. Responde SIEMPRE con rapidez y naturalidad en español. "
-            "2. Si en tu turno anterior NO hiciste una pregunta, asume que la conversación terminó y DEBES IGNORAR POR COMPLETO el ruido ambiental, televisión o conversaciones de Jonathan, a menos que él diga claramente la palabra 'Iris'. "
-            "3. Si en tu turno anterior SÍ hiciste una pregunta, presta atención y responde directamente a lo que diga Jonathan sin que él necesite decir 'Iris'. "
-            "4. Cuando hagas una pregunta, SIEMPRE utiliza el signo de interrogación (¿ y ?). "
-            "5. NUNCA te despidas con una pregunta."
+            "Estás operando en una llamada de audio continua. "
+            "REGLAS DE INTERACCIÓN: "
+            "1. Responde SIEMPRE con rapidez y naturalidad en español. Sé concisa y amable. "
+            "2. OBLIGATORIO: Cuando hagas una pregunta al usuario, SIEMPRE utiliza el signo de interrogación (¿ y ?). Si tu respuesta es una afirmación o dato final, NO uses signos de interrogación. "
+            "3. Nunca te despidas con una pregunta. "
+            "4. REGLA ESTRICTA DE SILENCIO INICIAL: Si el usuario SOLAMENTE dice tu nombre ('Iris', 'oye Iris', etc.) para llamar tu atención, TIENES ESTRICTAMENTE PROHIBIDO RESPONDER. No digas 'Hola', ni 'Dime'. Mantente en silencio absoluto y espera a que el usuario dicte su orden."
         )
-        
-        loop = asyncio.get_event_loop()
         
         while True:
             try:
@@ -282,7 +383,10 @@ class IRISCore:
                 
                 self.tool_in_progress = False
                 self.is_speaking_ui = False
-                self.texto_respuesta = ""
+                
+                # Reseteamos vigilante
+                self.texto_acumulado = "" 
+                self.evaluando_turno = False
                 
                 config = types.LiveConnectConfig(
                     response_modalities=["AUDIO"],
@@ -293,13 +397,7 @@ class IRISCore:
                 
                 async with self.client.aio.live.connect(model=MODEL, config=config) as session:
                     log_guardia("✅ Conexión con Gemini establecida.")
-                    
-                    if self.mic_abierto:
-                        loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🌐 EN LÍNEA")
-                        loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Micrófono abierto. Habla naturalmente.")
-                    else:
-                        loop.call_soon_threadsafe(self.ui.puente.senal_estado.emit, "🛡️ SUSPENSIÓN")
-                        loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Modo reposo. Di 'Iris' para llamar su atención.")
+                    self.actualizar_ui_estado()
                     
                     send_task = asyncio.create_task(self._send_realtime(session))
                     receive_task = asyncio.create_task(self._receive_audio(session))
@@ -341,7 +439,7 @@ if __name__ == "__main__":
     socket = QLocalSocket()
     socket.connectToServer("IRIS_SingleInstance")
     if socket.waitForConnected(500):
-        print("SYS: Ya hay una instancia en ejecución. Cerrando clon.")
+        print("SYS: Ya hay clon. Cerrando.")
         sys.exit(1)
         
     local_server = QLocalServer()
