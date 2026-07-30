@@ -27,6 +27,15 @@ PALABRAS_LINEA = (
     "WHAT U HEAR", "LOOPBACK", "DIGITAL AUDIO",
 )
 
+# Diademas cuyo micrófono Windows expone como entrada de tipo "Line".
+# Verificado por medición en el Astro A50 de este equipo: el micrófono vive en
+# "Line (2- Astro A50 Game)" y el endpoint "Headset Microphone (Astro A50 Voice)"
+# NO entrega audio. Para estos dispositivos "Line" no significa entrada auxiliar.
+PALABRAS_DIADEMA = (
+    "ASTRO", "HYPERX", "STEELSERIES", "ARCTIS", "CORSAIR", "RAZER", "LOGITECH",
+    "TURTLE BEACH", "SENNHEISER", "EPOS", "JABRA", "PLANTRONICS", "CLOUD ",
+)
+
 
 def _norm(texto):
     """Normaliza un nombre de dispositivo para comparar sin ruido.
@@ -48,7 +57,14 @@ def es_virtual(nombre):
     return _contiene(nombre, PALABRAS_VIRTUALES)
 
 
+def es_diadema(nombre):
+    return _contiene(nombre, PALABRAS_DIADEMA)
+
+
 def es_linea(nombre):
+    # Una entrada "Line" que pertenece a una diadema SÍ es un micrófono de voz.
+    if es_diadema(nombre):
+        return False
     return _contiene(nombre, PALABRAS_LINEA)
 
 
@@ -113,9 +129,13 @@ def elegir_microfono(nombre_cfg=""):
         if es_virtual(n) or es_linea(n):
             return -1
         puntos = 0
-        if "ASTRO" in n:
-            puntos += 8
-        if "HEADSET" in n or "HEADPHONE" in n or "DIADEMA" in n:
+        if es_diadema(n):
+            # 🎧 En el Astro A50 el micrófono está en el endpoint "Game"; el "Voice"
+            # aparece en la lista pero no entrega audio. MME recorta los nombres a 31
+            # caracteres ("Astro A50 V"), así que no podemos buscar "VOICE": preferimos
+            # explícitamente "GAME" en vez de descartar el otro.
+            puntos += 12 if "GAME" in n else 3
+        elif "HEADSET" in n or "HEADPHONE" in n or "DIADEMA" in n:
             puntos += 4
         if "MICROPHONE" in n or "MICRÓFONO" in n or "MICROFONO" in n or " MIC" in n:
             puntos += 2

@@ -17,7 +17,7 @@
     "spotify_client_id": "",
     "spotify_client_secret": "",
     "spotify_redirect_uri": "http://127.0.0.1:8888/callback",
-    "mic_device_name": "Headset Microphone (Astro A50 V",
+    "mic_device_name": "Line (2- Astro A50 Game)",
     "speaker_device_name": "Headphones (Astro A50 Game)",
     "camera_device_name": "USB webcam"
 }
