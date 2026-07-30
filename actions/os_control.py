@@ -1,6 +1,5 @@
-from ctypes import cast, POINTER
-from comtypes import CLSCTX_ALL
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+from comtypes import CoInitialize, CoUninitialize
+from pycaw.pycaw import AudioUtilities
 import pygetwindow as gw
 
 
@@ -10,10 +9,17 @@ def os_control(args):
     try:
         if action == "set_volume":
             level = float(args.get("level", 0.5))  # Nivel de 0.0 a 1.0
-            devices = AudioUtilities.GetSpeakers()
-            interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-            volume = cast(interface, POINTER(IAudioEndpointVolume))
-            volume.SetMasterVolumeLevelScalar(level, None)
+            # En la versión instalada de pycaw, GetSpeakers() devuelve un AudioDevice
+            # sin .Activate: su propiedad EndpointVolume ya trae la interfaz lista.
+            # (El .Activate de antes lanzaba AttributeError: era el "problema técnico"
+            # que reportaba I.R.I.S. al tocar el volumen. COM se inicializa por hilo,
+            # porque main.py ejecuta las herramientas en hilos.)
+            CoInitialize()
+            try:
+                volume = AudioUtilities.GetSpeakers().EndpointVolume
+                volume.SetMasterVolumeLevelScalar(max(0.0, min(1.0, level)), None)
+            finally:
+                CoUninitialize()
             return f"Volumen maestro ajustado al {int(level * 100)}%"
 
         elif action == "minimize_all":

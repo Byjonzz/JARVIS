@@ -13,6 +13,16 @@ def auto_programmer(parameters: dict) -> str:
     
     # Aseguramos que el nombre sea válido para Python
     tool_name = tool_name.replace(" ", "_").lower()
+
+    # 🔒 Esta herramienta SOLO CREA archivos nuevos. Sin este candado, pedir
+    # "arregla os_control" con tool_name='os_control' SOBRESCRIBÍA la herramienta
+    # existente con código generado desde cero (pasó de verdad: se perdió
+    # minimize_all). Editar lo existente es trabajo de self_edit.
+    ruta = os.path.join("actions", f"{tool_name}.py")
+    if os.path.exists(ruta):
+        return (f"Error: la herramienta '{tool_name}' YA EXISTE y auto_programmer solo crea "
+                "herramientas nuevas. Para arreglarla o modificarla usa 'self_edit' con "
+                f"target_file '{tool_name}.py'; para una alternativa nueva, elige otro nombre.")
     
     prompt = f"""
     Eres I.R.I.S., un Arquitecta de Software Senior en Python con nivel de acceso 'Modo Dios'.
@@ -75,7 +85,6 @@ def auto_programmer(parameters: dict) -> str:
             return ("El modelo no devolvió código Python utilizable. "
                     f"Empieza de su respuesta: {texto[:200]}")
 
-        ruta = os.path.join("actions", f"{tool_name}.py")
         with open(ruta, "w", encoding="utf-8") as f:
             f.write(codigo)
 
