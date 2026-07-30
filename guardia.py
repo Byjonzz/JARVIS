@@ -1,15 +1,49 @@
 import sys
 import os
+import socket
 import time
 import queue
 import json
 import subprocess
+
+# 🚀 RENDIMIENTO: los .pyc van FUERA de OneDrive. El proyecto vive en una carpeta
+# sincronizada y cada __pycache__ regenerado disparaba una subida de OneDrive
+# (CPU + disco). Se fija ANTES de importar los módulos pesados, y main.py lo
+# hereda por la variable de entorno.
+os.environ.setdefault("PYTHONPYCACHEPREFIX",
+                      os.path.join(os.environ.get("LOCALAPPDATA", "."), "IRIS", "pycache"))
+sys.pycache_prefix = os.environ["PYTHONPYCACHEPREFIX"]
+
 import sounddevice as sd
 from vosk import Model, KaldiRecognizer, SetLogLevel
 import keyboard
 
 import audio_devices
 from config_manager import load_api_keys
+
+# 🔒 CANDADO DE INSTANCIA ÚNICA: se llegaron a acumular DOS guardias a la vez
+# (cada arranque.bat sumaba uno), cada uno con su Vosk y su stream de micrófono:
+# doble CPU y lag. El que no consigue el puerto se retira en silencio.
+_CANDADO = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    _CANDADO.bind(("127.0.0.1", 47823))
+    _CANDADO.listen(1)
+except OSError:
+    print("Ya hay otro guardián corriendo. Este se retira.")
+    sys.exit(0)
+
+
+def ui_viva():
+    """¿Hay un main.py vivo? Se detecta por su tubería 'IRIS_SingleInstance'.
+
+    Cubre el caso en que la UI se reinició sola (reinicio educado del núcleo):
+    el main.py nuevo ya no es hijo nuestro, y sin este chequeo el guardián le
+    pelearía el micrófono decodificando voz en paralelo.
+    """
+    try:
+        return "IRIS_SingleInstance" in os.listdir(r"\\.\pipe")
+    except Exception:
+        return False
 
 # --- SISTEMA DE LOGS INVISIBLE ---
 # Se abre en modo "a": main.py también escribe en este archivo, y en modo "w"
@@ -94,35 +128,50 @@ def vigilar():
 
     ALIAS_JARVIS = {"iris", "yris", "iriz", "yriz", "ivis", "jarvis"}
 
+    ZEROS = None  # bloque de silencio digital puro (para saltarse a Vosk)
+
     while True:
-        # 🟢 Mientras la UI está en pantalla el micrófono es SUYO: esperamos sin
-        # tocarlo. (Antes reabríamos el stream en bucle cerrado miles de veces por
-        # minuto, peleándole el micrófono a main.py y llenando el log de basura.)
-        if jarvis_en_pantalla:
-            time.sleep(0.3)
+        # 🟢 Mientras la UI está en pantalla (nuestra o reiniciada por su cuenta)
+        # el micrófono es SUYO: esperamos sin tocarlo.
+        if jarvis_en_pantalla or ui_viva():
+            time.sleep(0.5)
             continue
 
         print("🛡️ Guardia en posición. Esperando voz o teclado...")
         despertar = False
         bloques_mudos = 0
         aviso_silencio = False
+        chequeo_ui = 0
 
         try:
             # El stream se abre y se cierra limpiamente en cada ciclo de escucha activa
             with sd.RawInputStream(device=mic_idx, samplerate=16000, blocksize=4000,
                                    dtype='int16', channels=1, callback=callback):
                 while not despertar and not jarvis_en_pantalla:
+                    # Cada ~2s comprobamos si apareció una UI que no lanzamos
+                    # nosotros: si vive, le cedemos el micrófono de inmediato.
+                    chequeo_ui += 1
+                    if chequeo_ui >= 4:
+                        chequeo_ui = 0
+                        if ui_viva():
+                            break
                     try:
                         # Timeout corto para revisar frecuentemente si la UI se activó por teclado
                         data = audio_queue.get(timeout=0.5)
                     except queue.Empty:
                         continue
 
+                    # 🚀 Silencio digital absoluto (micrófono muerto o virtual mudo):
+                    # no hay nada que reconocer, Vosk no gasta CPU en ceros.
+                    if ZEROS is None or len(ZEROS) != len(data):
+                        ZEROS = b"\x00" * len(data)
+                    es_cero = (data == ZEROS)
+
                     # 🔇 Vigilante de silencio digital: si el micrófono no entrega
                     # NADA durante medio minuto, lo decimos en vez de fingir que
                     # vigilamos (esto delata micrófonos virtuales apagados).
                     if not aviso_silencio:
-                        if max(data) == 0 and min(data) == 0:
+                        if es_cero:
                             bloques_mudos += 1
                             if bloques_mudos >= 120:  # ~30 s de ceros absolutos
                                 aviso_silencio = True
@@ -130,6 +179,9 @@ def vigilar():
                                       "No podré oír el wake-word: revisa que sea el micrófono correcto en Ajustes.")
                         else:
                             bloques_mudos = 0
+
+                    if es_cero:
+                        continue  # nada que reconocer: Vosk no gasta CPU en ceros
 
                     if recognizer.AcceptWaveform(data):
                         resultado = json.loads(recognizer.Result())

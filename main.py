@@ -40,7 +40,10 @@ TOOL_EN_FONDO = set()       # acciones con TOOL_BACKGROUND: se ejecutan en segun
                             # y el resultado se anuncia por voz cuando terminan de verdad
 CATALOG_VERSION = 0         # sube en cada auto_descubrir: run() detecta catálogos obsoletos
 
+_LOG_FILE = None
+
 def log_guardia(mensaje):
+    global _LOG_FILE
     ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
     linea = f"[{ts}] {mensaje}"
     try:
@@ -50,8 +53,13 @@ def log_guardia(mensaje):
         try: print(linea.encode("ascii", "replace").decode("ascii"))
         except Exception: pass
     try:
-        with open("guardia_log.txt", "a", encoding="utf-8") as f:
-            f.write(linea + "\n")
+        # Handle persistente con búfer de línea: abrir/cerrar el archivo por cada
+        # línea hacía que OneDrive resincronizara el log en cada evento (el
+        # proyecto vive en una carpeta sincronizada). Abierto se sube una sola
+        # vez, al cerrar la aplicación.
+        if _LOG_FILE is None:
+            _LOG_FILE = open("guardia_log.txt", "a", encoding="utf-8", buffering=1)
+        _LOG_FILE.write(linea + "\n")
     except Exception:
         pass
 
@@ -121,36 +129,42 @@ def auto_descubrir_herramientas():
     except Exception:
         pass
 
-    TOOL_DECLARATIONS.clear()
-    FUNCIONES_DISPONIBLES.clear()
-    TOOL_EN_FONDO.clear()
-    
     if not os.path.exists("actions"):
         os.makedirs("actions")
         return
 
+    # 🚀 Se construye el catálogo NUEVO en variables locales y se intercambia al
+    # final: esta función ahora puede correr en un hilo (asyncio.to_thread) sin
+    # que run() o el ejecutor de herramientas vean un catálogo a medio llenar.
+    decl_nuevas, funcs_nuevas, fondo_nuevo, timeouts_nuevos = [], {}, set(), {}
+
     for archivo in os.listdir("actions"):
         if archivo.endswith(".py") and archivo != "__init__.py":
-            nombre = archivo[:-3] 
+            nombre = archivo[:-3]
             try:
                 modulo = importlib.import_module(f"actions.{nombre}")
-                importlib.reload(modulo) 
-                
+                importlib.reload(modulo)
+
                 if hasattr(modulo, nombre):
-                    FUNCIONES_DISPONIBLES[nombre] = getattr(modulo, nombre)
+                    funcs_nuevas[nombre] = getattr(modulo, nombre)
                 if hasattr(modulo, "TOOL_DEF"):
-                    TOOL_DECLARATIONS.append(modulo.TOOL_DEF)
+                    decl_nuevas.append(modulo.TOOL_DEF)
                 # ⏱️ Las herramientas lentas (auto_programmer, self_edit llaman a una
                 # IA externa que tarda minutos) declaran su propio límite de tiempo.
                 if hasattr(modulo, "TOOL_TIMEOUT"):
                     try:
-                        TOOL_TIMEOUTS[nombre] = float(modulo.TOOL_TIMEOUT)
+                        timeouts_nuevos[nombre] = float(modulo.TOOL_TIMEOUT)
                     except Exception:
                         pass
                 if getattr(modulo, "TOOL_BACKGROUND", False):
-                    TOOL_EN_FONDO.add(nombre)
+                    fondo_nuevo.add(nombre)
             except Exception as e:
                 log_guardia(f"⚠️ Error al auto-descubrir '{nombre}':\n{traceback.format_exc()}")
+
+    TOOL_DECLARATIONS[:] = decl_nuevas
+    FUNCIONES_DISPONIBLES.clear(); FUNCIONES_DISPONIBLES.update(funcs_nuevas)
+    TOOL_EN_FONDO.clear(); TOOL_EN_FONDO.update(fondo_nuevo)
+    TOOL_TIMEOUTS.clear(); TOOL_TIMEOUTS.update(timeouts_nuevos)
                 
     if enroll_pendiente:
         try:
@@ -191,6 +205,7 @@ class IRISCore:
         self._renovar_sesion = asyncio.Event()   # pide reconectar para recargar herramientas
         self._tareas_fondo_activas = 0           # tareas de fondo aún trabajando
         self._tareas_fondo = set()               # referencias vivas (asyncio solo guarda débiles)
+        self._vosk_con_senal = False             # Vosk descansa durante silencio digital
 
         # 🔁 Si venimos de un reinicio del núcleo, retomamos la MISMA conversación:
         # _reiniciar_tras_hablar dejó el asa de reanudación guardada en disco.
@@ -398,7 +413,9 @@ class IRISCore:
                             self.ui._win.orb.set_audio(nivel)
                     except RuntimeError: pass
                         
-                vol_max = float(np.max(np.abs(indata.astype(np.int32))))
+                # Una sola conversión por bloque (antes había dos astype distintos)
+                arr = indata.astype(np.float64)
+                vol_max = float(np.max(np.abs(arr)))
                 nivel = vol_max / 32768.0
                 if nivel > self._nivel_pico: self._nivel_pico = nivel
 
@@ -457,7 +474,7 @@ class IRISCore:
                     # inicializaba en 1535, dejando el umbral en 5373, y NINGÚN bloque de
                     # voz lo superaba en 10s). Por eso el arranque está acotado y el piso
                     # nunca se queda por encima de lo que realmente entra.
-                    rms = float(np.sqrt(np.mean(indata.astype(np.float64) ** 2)))
+                    rms = float(np.sqrt(np.mean(arr ** 2)))
                     if self._ruido is None: self._ruido = float(np.clip(rms, 1.0, 150.0))
                     voz_activa = rms > max(self._ruido * 3.5, self._vad_min)
                     if not voz_activa:
@@ -465,13 +482,20 @@ class IRISCore:
                     elif rms < self._ruido:
                         self._ruido = max(rms, 1.0)
 
-                    with self.vosk_lock:
-                        if self.recognizer.AcceptWaveform(data_bytes):
-                            res = json.loads(self.recognizer.Result())
-                            texto = res.get("text", "").lower()
-                        else:
-                            res = json.loads(self.recognizer.PartialResult())
-                            texto = res.get("partial", "").lower()
+                    # 🚀 Silencio digital absoluto: Vosk no gasta CPU en ceros. Se le
+                    # entrega un último bloque de ceros para que cierre lo pendiente
+                    # y después descansa hasta que vuelva a haber señal.
+                    if vol_max == 0.0 and not self._vosk_con_senal:
+                        texto = ""
+                    else:
+                        self._vosk_con_senal = vol_max > 0.0
+                        with self.vosk_lock:
+                            if self.recognizer.AcceptWaveform(data_bytes):
+                                res = json.loads(self.recognizer.Result())
+                                texto = res.get("text", "").lower()
+                            else:
+                                res = json.loads(self.recognizer.PartialResult())
+                                texto = res.get("partial", "").lower()
 
                     palabras_detectadas = set(texto.replace(",", "").replace(".", "").split())
 
@@ -890,7 +914,9 @@ class IRISCore:
             # anuncio a medio decir: el famoso corte a mitad de frase.)
             await self._esperar_anuncio_hablado()
             try:
-                auto_descubrir_herramientas()
+                # En un hilo aparte: el reload en frío tarda ~0.5s y dentro del
+                # event loop congelaba la bocina y el envío de audio (lag audible).
+                await asyncio.to_thread(auto_descubrir_herramientas)
                 self._renovar_sesion.set()
             except Exception as e:
                 log_guardia(f"⚠️ No pude recargar el catálogo de herramientas: {e}")
