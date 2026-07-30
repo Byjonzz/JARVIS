@@ -773,8 +773,8 @@ void main(){
   vec2 d = gl_PointCoord - vec2(0.5);
   float mascara = smoothstep(0.5, 0.16, length(d));
   // curva agresiva en puntos: lo tenue casi desaparece, los rasgos brillan
-  float aPunto = mascara * (0.15 + 0.62*vB*vB);
-  float aLinea = (0.05 + 0.14*vB) * uVelo;
+  float aPunto = mascara * (0.10 + 0.68*vB*vB);
+  float aLinea = (0.035 + 0.20*vB*vB) * uVelo;   // la malla resalta donde brilla el contorno
   float a = mix(aPunto, aLinea, uLinea);
   gl_FragColor = vec4(uColor*(0.45+0.75*vB), a);
 }`;
@@ -903,7 +903,7 @@ function dibujar3D(tNow, dt, energia) {
   apert3 += (apObjetivo - apert3) * (apObjetivo > apert3 ? 0.55 : 0.3) * dt;
 
   // esfera: giro perezoso · rostro: tres cuartos con vaivén sutil (como la referencia)
-  const ry = Math.sin(t * 0.2) * 0.5 * (1 - morph3) + (-0.34 + Math.sin(t * 0.5) * 0.05) * morph3;
+  const ry = Math.sin(t * 0.2) * 0.5 * (1 - morph3) + (-0.44 + Math.sin(t * 0.5) * 0.05) * morph3;
   const rx = Math.cos(t * 0.2) * 0.3 * (1 - morph3) + (0.03 + Math.sin(t * 0.85) * 0.03) * morph3;
   const cy = Math.cos(ry), sy = Math.sin(ry), cxr = Math.cos(rx), sxr = Math.sin(rx);
   const rot = new Float32Array([
