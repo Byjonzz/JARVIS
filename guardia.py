@@ -23,13 +23,18 @@ from config_manager import load_api_keys
 
 # 🔒 CANDADO DE INSTANCIA ÚNICA: se llegaron a acumular DOS guardias a la vez
 # (cada arranque.bat sumaba uno), cada uno con su Vosk y su stream de micrófono:
-# doble CPU y lag. El que no consigue el puerto se retira en silencio.
+# doble CPU y lag. El que no consigue el puerto se retira dejando constancia en el
+# log (bajo pythonw un print no va a ninguna parte).
 _CANDADO = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 try:
     _CANDADO.bind(("127.0.0.1", 47823))
     _CANDADO.listen(1)
 except OSError:
-    print("Ya hay otro guardián corriendo. Este se retira.")
+    try:
+        with open("guardia_log.txt", "a", encoding="utf-8") as _f:
+            _f.write(f"[{time.strftime('%H:%M:%S')}] 🔒 Ya hay otro guardián corriendo; este intento se retira.\n")
+    except Exception:
+        pass
     sys.exit(0)
 
 
@@ -111,11 +116,16 @@ def vigilar():
     # 🎤 El MISMO micrófono que usará main.py (antes abríamos el "por defecto" de
     # Windows, que puede ser un micrófono virtual mudo aunque abra sin error).
     cfg = load_api_keys()
-    mic_idx, mic_nombre, mic_aviso = audio_devices.elegir_microfono(cfg.get("mic_device_name", ""))
-    print(f"🎤 Micrófonos detectados: {audio_devices.describir_entradas()}")
-    print(f"🎤 Escuchando por: [{mic_idx}] {mic_nombre}")
-    if mic_aviso:
-        print(f"⚠️ {mic_aviso}")
+
+    def elegir_mic():
+        idx, nombre, aviso = audio_devices.elegir_microfono(cfg.get("mic_device_name", ""))
+        print(f"🎤 Micrófonos detectados: {audio_devices.describir_entradas()}")
+        print(f"🎤 Escuchando por: [{idx}] {nombre}")
+        if aviso:
+            print(f"⚠️ {aviso}")
+        return idx, nombre
+
+    mic_idx, mic_nombre = elegir_mic()
 
     def callback(indata, frames, time_info, status):
         # Solo encolamos audio si la UI no está abierta en pantalla
@@ -200,8 +210,20 @@ def vigilar():
                         despertar = True
         except Exception as e:
             print(f"⚠️ No pude abrir el micrófono [{mic_idx}] {mic_nombre}: {e}")
-            print("   Reintentando en 3 segundos...")
+            print("   Reintentando en 3 segundos (releyendo la lista de dispositivos)...")
             time.sleep(3)
+            # 🔌 En el arranque de Windows los dispositivos de audio pueden tardar
+            # en aparecer: refrescamos la lista y volvemos a elegir micrófono en
+            # vez de insistir para siempre con un índice que quizá ya no existe.
+            try:
+                sd._terminate()
+                sd._initialize()
+            except Exception:
+                pass
+            try:
+                mic_idx, mic_nombre = elegir_mic()
+            except Exception:
+                pass
             continue
 
         # Si salimos del bloque "with", el micrófono se libera temporalmente
