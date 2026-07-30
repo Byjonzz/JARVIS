@@ -3,6 +3,7 @@ warnings.filterwarnings("ignore")
 
 import asyncio
 import json
+import re
 import sys
 import threading
 import time
@@ -11,6 +12,7 @@ import collections
 import importlib
 import datetime
 import traceback
+import unicodedata
 import numpy as np
 import sounddevice as sd
 from vosk import Model, KaldiRecognizer, SetLogLevel
@@ -47,6 +49,59 @@ def log_guardia(mensaje):
             f.write(linea + "\n")
     except Exception:
         pass
+
+def _parece_pregunta(texto: str) -> bool:
+    """¿La frase de I.R.I.S espera una respuesta del usuario?
+
+    Los signos '¿?' son la señal principal, pero la transcripción oficial del AUDIO
+    la genera el transcriptor de Google y a veces llega sin puntuación: una pregunta
+    hablada quedaba clasificada como afirmación y el micrófono se cerraba en la cara
+    del usuario. Esta red de seguridad reconoce la ESTRUCTURA interrogativa del
+    español en la última frase, sin depender de los signos.
+    """
+    if "?" in texto or "¿" in texto:
+        return True
+    t = "".join(c for c in unicodedata.normalize("NFD", texto.lower())
+                if unicodedata.category(c) != "Mn")
+    frases = [f.strip() for f in re.split(r"[.!\n;]+", t) if f.strip()]
+    if not frases:
+        return False
+    ultima = frases[-1]
+    palabras = ultima.split()
+    if not palabras:
+        return False
+
+    interrogativas = {"que", "cual", "cuales", "como", "donde", "adonde", "cuando",
+                      "cuanto", "cuanta", "cuantos", "cuantas", "quien", "quienes"}
+    # "que descanses", "que tengas buena noche": deseos de despedida, no preguntas
+    deseos = ("descans", "duerm", "disfrut", "aproveche", "te vaya", "le vaya",
+              "tengas", "tenga", "buen dia", "buena noche", "buenas noches", "suerte")
+    # "¿qué canción...?", "¿cuál prefieres...?" (sin los signos)
+    if palabras[0] in interrogativas:
+        if palabras[0] == "que" and any(d in ultima for d in deseos):
+            pass  # desiderativo ("que descanses señor"), sigue evaluando otras señales
+        else:
+            return True
+    # "¿en qué puedo ayudarte?", "¿de cuál hablas?"
+    if len(palabras) > 1 and palabras[0] in {"en", "a", "de", "por", "para", "con",
+                                             "sobre", "desde", "hasta"} \
+            and palabras[1] in interrogativas:
+        return True
+    # "¿quieres que lo abra?", "¿procedo?", "¿hay algo más?"
+    if palabras[0] in {"quieres", "deseas", "necesitas", "prefieres", "puedo",
+                       "procedo", "confirmas", "hay", "tienes", "seguro", "segura"}:
+        return True
+    # Ofertas y peticiones de respuesta en cualquier punto de la última frase
+    patrones = ("quieres", "deseas", "necesitas", "prefieres", "te gustaria",
+                "te parece", "te apetece", "te interesa", "puedo ayudarte",
+                "en que puedo", "algo mas", "alguna otra", "me confirmas",
+                "confirmame", "dime", "cuentame", "indicame", "avisame",
+                "hazme saber", "me dices")
+    if any(p in ultima for p in patrones):
+        return True
+    # Coletillas de confirmación al final: "...verdad", "...cierto"
+    return ultima.endswith(("verdad", "cierto", "no es asi", "de acuerdo"))
+
 
 def auto_descubrir_herramientas():
     log_guardia("⚙️ Descubriendo herramientas en /actions...")
@@ -95,6 +150,8 @@ class IRISCore:
         self.ventana_hasta = 0.0       # momento en que expira la ventana sin wake-word
         self._ruido = None             # piso de ruido para el detector de actividad de voz
         self._rechazos_seguidos = 0    # wake-words seguidos rechazados por la biometría
+        self._turno_completo = False   # el servidor confirmó fin de turno (transcripción entera)
+        self._resumption_handle = None # asa para reanudar la sesión Live si la conexión se cae
 
         # 🎚️ "Sensibilidad del micrófono" de Ajustes: hasta ahora se guardaba en el
         # config y NADIE la leía. Es el suelo mínimo del detector de voz, así que un
@@ -221,11 +278,26 @@ class IRISCore:
 
         if not texto:
             # Turno vacío. Si venimos de reproducir audio (o quedamos en HABLANDO),
-            # NUNCA nos quedamos atascados: cerramos micrófono y volvemos a guardia.
+            # NUNCA nos quedamos atascados. Pero cerrar en seco era injusto: si la
+            # transcripción se perdió (p. ej. la conexión se recicló mientras el
+            # audio aún sonaba), I.R.I.S pudo haber hecho una pregunta que nunca
+            # veremos. Con el guardián activo dejamos la ventana biométrica: solo
+            # TU voz reabre, y el silencio la cierra sola.
             if tras_audio or self.estado == "HABLANDO":
-                log_guardia("🔇 Turno de voz sin transcripción. Cerrando micrófono por seguridad.")
-                self.estado = "SUSPENSION"
-                self._reset_recognizer_seguro()
+                if voice_guard.lock_activo() and voice_guard.ventana_segundos() > 0:
+                    log_guardia("🕓 Turno de voz sin transcripción: abro ventana de seguimiento "
+                                "por si fue una pregunta (solo tu voz reabre).")
+                    self.estado = "VENTANA"
+                    self.ventana_hasta = time.monotonic() + voice_guard.ventana_segundos()
+                    self._habla_acum = b""
+                    self._bloques_voz = 0
+                    self._sil_seguidos = 0
+                    self._reset_recognizer_seguro()
+                    self.audio_buffer.clear()
+                else:
+                    log_guardia("🔇 Turno de voz sin transcripción. Cerrando micrófono por seguridad.")
+                    self.estado = "SUSPENSION"
+                    self._reset_recognizer_seguro()
                 self.texto_usuario = ""
                 self.actualizar_ui()
             return
@@ -233,7 +305,11 @@ class IRISCore:
         log_guardia(f"🔎 Analizando respuesta física de I.R.I.S: '{texto}'")
 
         if "?" in texto or "¿" in texto:
-            log_guardia("❓ PREGUNTA DETECTADA. Manteniendo micrófono abierto.")
+            log_guardia("❓ PREGUNTA DETECTADA (signos). Manteniendo micrófono abierto.")
+            self.estado = "ESCUCHANDO"
+        elif _parece_pregunta(texto):
+            log_guardia("❓ PREGUNTA DETECTADA (estructura interrogativa, la transcripción "
+                        "vino sin signos). Manteniendo micrófono abierto.")
             self.estado = "ESCUCHANDO"
         elif voice_guard.lock_activo() and voice_guard.ventana_segundos() > 0:
             # 🕓 VENTANA DE SEGUIMIENTO: unos segundos para seguir hablando sin
@@ -474,13 +550,30 @@ class IRISCore:
                 
                 await session.send_realtime_input(audio=types.Blob(data=bytes(data), mime_type="audio/pcm;rate=16000"))
                 await asyncio.sleep(0.01)
-        except (websockets.exceptions.ConnectionClosedError, asyncio.TimeoutError): return 
-        except Exception: return
+        except websockets.exceptions.ConnectionClosedError as e:
+            log_guardia(f"🔌 Conexión con Gemini cerrada (envío): code={getattr(e, 'code', '?')} reason={getattr(e, 'reason', '')!r} {e}")
+            return
+        except asyncio.TimeoutError:
+            log_guardia("🔌 Timeout enviando audio a Gemini.")
+            return
+        except Exception:
+            log_guardia(f"❌ Error enviando audio a Gemini (la sesión se reiniciará):\n{traceback.format_exc()}")
+            return
 
     async def _receive_audio(self, session):
         try:
             async for response in session.receive():
                 sc = response.server_content
+
+                # 🔁 Asa de reanudación: si la conexión se cae, la siguiente se
+                # reconecta CON el contexto de esta (el modelo recuerda el turno).
+                sru = getattr(response, 'session_resumption_update', None)
+                if sru is not None and getattr(sru, 'resumable', False) and getattr(sru, 'new_handle', None):
+                    self._resumption_handle = sru.new_handle
+
+                ga = getattr(response, 'go_away', None)
+                if ga is not None:
+                    log_guardia(f"⚠️ El servidor anuncia cierre de sesión (go_away, tiempo restante: {getattr(ga, 'time_left', '?')}).")
 
                 if sc:
                     # 🧠 Transcripción de TU voz (materia prima del aprendizaje neuronal)
@@ -497,6 +590,7 @@ class IRISCore:
                     # incluso cuando el modelo no envía texto en las parts)
                     ot = getattr(sc, 'output_transcription', None)
                     if ot and ot.text:
+                        self._turno_completo = False
                         self.texto_transcripcion += ot.text
                         if not self.texto_turno:
                             t = self.texto_transcripcion
@@ -504,6 +598,7 @@ class IRISCore:
                             if self.loop: self.loop.call_soon_threadsafe(self.ui.puente.senal_transcripcion.emit, f"IRIS: {texto_mostrar}")
 
                 if sc and sc.model_turn:
+                    self._turno_completo = False
                     for part in sc.model_turn.parts:
                         if part.inline_data and part.inline_data.data:
                             self.audio_in_queue.put_nowait(part.inline_data.data)
@@ -516,6 +611,7 @@ class IRISCore:
                             if self.loop: self.loop.call_soon_threadsafe(self.ui.puente.senal_transcripcion.emit, f"IRIS: {texto_mostrar}")
 
                 elif getattr(response, 'data', None):
+                    self._turno_completo = False
                     self.audio_in_queue.put_nowait(response.data)
 
                 if response.tool_call:
@@ -556,21 +652,40 @@ class IRISCore:
                                 except Exception as err:
                                     resultado = f"Error: {err}"
 
-                                respuestas_herramientas.append(types.FunctionResponse(id=fc.id, name=name, response={"result": str(resultado)}))
-                            
+                                # El id solo se manda si el servidor dio uno: un id nulo
+                                # en la respuesta puede tumbar la sesión entera.
+                                kwargs_fr = {"name": name, "response": {"result": str(resultado)}}
+                                if getattr(fc, "id", None):
+                                    kwargs_fr["id"] = fc.id
+                                respuestas_herramientas.append(types.FunctionResponse(**kwargs_fr))
+
                             await session.send_tool_response(function_responses=respuestas_herramientas)
                             if self.loop: self.loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, "SYS: Analizando datos...")
-                        except Exception: pass
+                        except Exception:
+                            # Si esto falla, el servidor queda esperando la respuesta de la
+                            # herramienta y cierra la sesión: dejarlo en silencio nos tuvo
+                            # una tarde entera sin saber por qué se caía la conexión.
+                            log_guardia(f"❌ Error enviando respuesta de herramienta a Gemini:\n{traceback.format_exc()}")
                             
                     asyncio.create_task(ejecutar_herramientas(response.tool_call.function_calls))
 
                 # Extra de seguridad: Si la red completa un turno SIN AUDIO (Puro texto)
                 if response.server_content and response.server_content.turn_complete:
+                    # 🏁 El servidor confirma que el turno acabó: la transcripción está
+                    # completa y _play_audio ya puede evaluar pregunta/afirmación.
+                    self._turno_completo = True
                     if self.audio_in_queue.empty() and self.estado != "HABLANDO":
                         self.evaluar_texto_y_estado()
-        
-        except (websockets.exceptions.ConnectionClosedError, asyncio.TimeoutError): return
-        except Exception: return
+
+        except websockets.exceptions.ConnectionClosedError as e:
+            log_guardia(f"🔌 Conexión con Gemini cerrada (recepción): code={getattr(e, 'code', '?')} reason={getattr(e, 'reason', '')!r} {e}")
+            return
+        except asyncio.TimeoutError:
+            log_guardia("🔌 Timeout en la recepción de Gemini.")
+            return
+        except Exception:
+            log_guardia(f"❌ Error procesando mensajes de Gemini (la sesión se reiniciará):\n{traceback.format_exc()}")
+            return
 
     async def _play_audio(self):
         stream = None
@@ -597,9 +712,18 @@ class IRISCore:
                         # Esperamos medio segundo de gracia por si vienen más pedazos de audio
                         await asyncio.sleep(0.5)
                         if self.audio_in_queue.empty() and self.estado != "ENROLANDO":
-                            # FÍSICAMENTE la bocina ha dejado de emitir sonido.
-                            # Este es el momento EXACTO para evaluar la frase completa.
-                            self.evaluar_texto_y_estado(tras_audio=True)
+                            # ⏳ Antes de evaluar, esperamos (máx 2s) la confirmación de
+                            # fin de turno del servidor: la transcripción puede llegar
+                            # DESPUÉS del último trozo de audio, y evaluar sin ella
+                            # clasificaba preguntas como turnos vacíos.
+                            for _ in range(20):
+                                if self._turno_completo or not self.audio_in_queue.empty():
+                                    break
+                                await asyncio.sleep(0.1)
+                            if self.audio_in_queue.empty() and self.estado != "ENROLANDO":
+                                # FÍSICAMENTE la bocina ha dejado de emitir sonido.
+                                # Este es el momento EXACTO para evaluar la frase completa.
+                                self.evaluar_texto_y_estado(tras_audio=True)
         else:
             while True: await asyncio.sleep(1)
 
@@ -623,8 +747,9 @@ class IRISCore:
             "- Si Jonathan requiere tu atención y solamente dice tu nombre ('Iris', 'oye Iris'), TIENES PROHIBIDO saludar "
             "('hola', 'dime'). Simplemente quédate en absoluto silencio (texto vacío); él sabrá que ya lo estás escuchando.\n"
             "- El hardware de tu micrófono reacciona a tu ortografía. Si necesitas que Jonathan te conteste, ES OBLIGATORIO "
-            "usar signos de interrogación (¿?). Si solo estás confirmando una acción o dando un dato final, NO uses signos "
-            "de interrogación bajo ninguna circunstancia.\n"
+            "usar signos de interrogación (¿?) Y formular la pregunta con una palabra interrogativa clara al inicio de la "
+            "frase final (qué, cuál, cómo, quieres, deseas, prefieres...). Si solo estás confirmando una acción o dando un "
+            "dato final, NO uses signos de interrogación ni frases interrogativas bajo ninguna circunstancia.\n"
             "- Despídete siempre con gracia, pero nunca lo hagas dejando una pregunta abierta."
         )
 
@@ -654,10 +779,14 @@ class IRISCore:
                     try: self.audio_in_queue.get_nowait()
                     except asyncio.QueueEmpty: break
                 
-                # Reseteo seguro al conectar
-                self.estado = "SUSPENSION"
-                self.texto_turno = ""
-                self.texto_transcripcion = ""
+                # Reseteo seguro al conectar. Si hay audio del turno anterior aún
+                # sonando (HABLANDO), NO machacamos estado ni transcripciones: la
+                # reconexión ocurría en plena respuesta y borraba la pregunta que
+                # _play_audio estaba a punto de evaluar.
+                if self.estado != "HABLANDO":
+                    self.estado = "SUSPENSION"
+                    self.texto_turno = ""
+                    self.texto_transcripcion = ""
                 self.texto_usuario = ""
                 self._habla_acum = b""
                 self._bloques_voz = 0
@@ -674,23 +803,35 @@ class IRISCore:
                     # neuronal y la de salida evita que el sistema quede mudo en "HABLANDO".
                     input_audio_transcription=types.AudioTranscriptionConfig(),
                     output_audio_transcription=types.AudioTranscriptionConfig(),
+                    # 🔁 Reanudación: si la conexión se cae a mitad de una orden, la
+                    # siguiente sesión CONTINÚA la conversación en vez de amnesia total.
+                    session_resumption=types.SessionResumptionConfig(handle=self._resumption_handle),
                 )
-                
+
                 async with self.client.aio.live.connect(model=MODEL, config=config) as session:
-                    log_guardia("✅ Conexión con Gemini establecida.")
+                    reanudada = " (reanudando conversación anterior)" if self._resumption_handle else ""
+                    log_guardia(f"✅ Conexión con Gemini establecida{reanudada}.")
                     self.actualizar_ui()
-                    
+
                     send_task = asyncio.create_task(self._send_realtime(session))
                     receive_task = asyncio.create_task(self._receive_audio(session))
-                    
+
                     done, pending = await asyncio.wait([send_task, receive_task], return_when=asyncio.FIRST_COMPLETED)
-                    
+
                     for task in pending: task.cancel()
                     for task in done:
                         try: task.result()
-                        except Exception: pass
-                        
-            except Exception: await asyncio.sleep(0.1)
+                        except Exception:
+                            log_guardia(f"🔌 La sesión terminó con error:\n{traceback.format_exc()}")
+                    log_guardia("🔄 Sesión con Gemini finalizada. Reconectando...")
+
+            except Exception:
+                # La conexión no pudo ni abrirse (red, API key, handle caducado...).
+                log_guardia(f"🔌 No se pudo conectar con Gemini (reintento en 1s):\n{traceback.format_exc()}")
+                # Un handle de reanudación caducado impide conectar: lo soltamos
+                # para que el siguiente intento entre con sesión limpia.
+                self._resumption_handle = None
+                await asyncio.sleep(1.0)
 
 def iniciar_cerebro(ui):
     try:
