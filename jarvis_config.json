@@ -6,7 +6,7 @@
     "ollama_model": "",
     "performance_quality": 87,
     "jarvis_voice": "Aoede",
-    "jarvis_theme": "cyan",
+    "jarvis_theme": "white",
     "gpu_acceleration": true,
     "voice_lock": true,
     "voice_strictness": 13,
