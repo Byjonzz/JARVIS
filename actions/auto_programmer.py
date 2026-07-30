@@ -26,6 +26,9 @@ def auto_programmer(parameters: dict) -> str:
     4. Devuelve ÚNICAMENTE el código Python puro dentro de un bloque ```python ... ```.
     """
     
+    # Modelo del programador: se puede cambiar con OPENROUTER_MODEL en .env
+    modelo = (os.getenv("OPENROUTER_MODEL") or "nvidia/nemotron-3-ultra-550b-a55b:free").strip()
+
     try:
         url = "https://openrouter.ai/api/v1/chat/completions"
         headers = {
@@ -33,33 +36,48 @@ def auto_programmer(parameters: dict) -> str:
             "Content-Type": "application/json"
         }
         payload = {
-            "model": "openai/gpt-oss-120b:free", # 🟢 Aquí está tu modelo gratuito
+            "model": modelo,
             "messages": [
                 {"role": "user", "content": prompt}
-            ]
+            ],
+            # Los modelos razonadores (como Nemotron) devuelven su "pensamiento"
+            # antes del código; esto lo excluye de la respuesta.
+            "reasoning": {"exclude": True}
         }
-        
+
         response = requests.post(url, headers=headers, json=payload, timeout=120)
-        response.raise_for_status() 
-        
+        if response.status_code != 200:
+            # El detalle del servidor (modelo inexistente, cuota agotada...) es lo
+            # único que permite diagnosticar; sin esto solo veíamos "hubo un problema".
+            return f"Error de OpenRouter (HTTP {response.status_code}): {response.text[:300]}"
+
         datos = response.json()
-        texto = datos["choices"][0]["message"]["content"]
-        
-        # Extracción Indestructible por Regex (tolera ```py, ```python y saltos CRLF)
+        if "choices" not in datos or not datos["choices"]:
+            return f"OpenRouter respondió sin código: {str(datos)[:300]}"
+        texto = datos["choices"][0]["message"]["content"] or ""
+
+        # Extracción Indestructible por Regex (tolera ```py, ```python y saltos CRLF).
+        # Se toma el ÚLTIMO bloque: si el modelo razona en voz alta, el código
+        # definitivo es siempre el final.
         bloques = re.findall(r'```(?:python|py)?[ \t]*\r?\n(.*?)```', texto, re.DOTALL)
         if bloques:
-            codigo = bloques[0].strip()
+            codigo = bloques[-1].strip()
         elif "```" in texto:
             codigo = texto.split("```")[1].split("```")[0].strip()
         else:
             codigo = texto.strip()
-            
+
+        if not codigo or "def " not in codigo:
+            return ("El modelo no devolvió código Python utilizable. "
+                    f"Empieza de su respuesta: {texto[:200]}")
+
         ruta = os.path.join("actions", f"{tool_name}.py")
         with open(ruta, "w", encoding="utf-8") as f:
             f.write(codigo)
-            
-        return f"Éxito: Usé el modelo OpenRouter gpt-oss-120b para programar la herramienta '{tool_name}.py'. Dile al usuario que reinicie la interfaz para cargarla."
-        
+
+        return (f"Éxito: usé el modelo {modelo} para programar la herramienta '{tool_name}.py'. "
+                "Dile al usuario que reinicie la interfaz para cargarla.")
+
     except Exception as e:
         return f"Error crítico en el auto-programador conectado a OpenRouter: {e}"
 

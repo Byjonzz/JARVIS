@@ -152,6 +152,8 @@ class IRISCore:
         self._rechazos_seguidos = 0    # wake-words seguidos rechazados por la biometría
         self._turno_completo = False   # el servidor confirmó fin de turno (transcripción entera)
         self._resumption_handle = None # asa para reanudar la sesión Live si la conexión se cae
+        self._ultima_llamada = None    # firma (herramienta, args) de la última ejecución real
+        self._omitir_repeticion = False  # tras reanudar sesión: ignorar la llamada calcada
 
         # 🎚️ "Sensibilidad del micrófono" de Ajustes: hasta ahora se guardaba en el
         # config y NADIE la leía. Es el suelo mínimo del detector de voz, así que un
@@ -562,6 +564,13 @@ class IRISCore:
 
     async def _receive_audio(self, session):
         try:
+          # 🔁 session.receive() entrega los mensajes de UN turno y su iterador
+          # termina en cada fin de turno: eso NO es una desconexión (lo dice el
+          # propio SDK: "responses will represent a complete model turn"). Antes
+          # lo tratábamos como muerte de la sesión: cada respuesta reconectaba, y
+          # al reanudar el modelo veía su última herramienta como pendiente y la
+          # repetía (así se abrió AC/DC cuatro veces con cada "no, es todo").
+          while True:
             async for response in session.receive():
                 sc = response.server_content
 
@@ -617,10 +626,28 @@ class IRISCore:
                 if response.tool_call:
                     async def ejecutar_herramientas(llamadas):
                         try:
+                            # 🔁 Anti-eco: tras reanudar una sesión caída, el modelo puede
+                            # repetir su última llamada como si siguiera pendiente. Solo la
+                            # primera tanda tras la reanudación se coteja contra la anterior.
+                            cotejar_repeticion = self._omitir_repeticion
+                            self._omitir_repeticion = False
+
                             respuestas_herramientas = []
                             for fc in llamadas:
                                 name = fc.name
                                 args = dict(fc.args) if fc.args else {}
+
+                                firma = (name, json.dumps(args, sort_keys=True, ensure_ascii=False))
+                                if cotejar_repeticion and firma == self._ultima_llamada:
+                                    log_guardia(f"🔁 {name} repetida por el modelo tras reanudar la sesión: IGNORADA (ya se ejecutó).")
+                                    kwargs_fr = {"name": name, "response": {"result": (
+                                        "Esa acción YA se ejecutó correctamente hace un momento, antes de una "
+                                        "reconexión. NO la repitas ni la menciones como nueva: continúa la conversación.")}}
+                                    if getattr(fc, "id", None): kwargs_fr["id"] = fc.id
+                                    respuestas_herramientas.append(types.FunctionResponse(**kwargs_fr))
+                                    continue
+                                self._ultima_llamada = firma
+
                                 log_guardia(f"⚙️ Ejecutando herramienta: {name}")
                                 if self.loop: self.loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, f"⚙️ Ejecutando: {name}...")
 
@@ -810,6 +837,9 @@ class IRISCore:
 
                 async with self.client.aio.live.connect(model=MODEL, config=config) as session:
                     reanudada = " (reanudando conversación anterior)" if self._resumption_handle else ""
+                    # En una sesión reanudada, la primera llamada de herramienta idéntica
+                    # a la última ejecutada se considera un eco y se ignora.
+                    self._omitir_repeticion = bool(self._resumption_handle)
                     log_guardia(f"✅ Conexión con Gemini establecida{reanudada}.")
                     self.actualizar_ui()
 
