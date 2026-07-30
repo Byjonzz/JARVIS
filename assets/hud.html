@@ -236,6 +236,7 @@
 <div id="tira"></div>
 
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script src="cara_datos.js"></script>
 <script>
 "use strict";
 /* ══════════════ Estado global ══════════════ */
@@ -621,9 +622,13 @@ requestAnimationFrame(marco);
    Esfera de 12.000 partículas que, cuando I.R.I.S. HABLA, se transforma en un
    ROSTRO cuyo labio inferior y mandíbula se mueven con el nivel real de su voz. */
 const cv3 = document.getElementById("fx3d");
-let gl3 = null, n3 = 0, morph3 = 0, apert3 = 0;
+let gl3 = null, n3 = 0, nLineas3 = 0, bufLineas3 = {}, bufPuntos3 = {}, morph3 = 0, apert3 = 0;
 const loc3 = {};
 const DPR3 = Math.min(devicePixelRatio || 1, 1.5);
+
+const b64Bytes = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const b64F32 = s => new Float32Array(b64Bytes(s).buffer);
+const b64U16 = s => new Uint16Array(b64Bytes(s).buffer);
 
 function zSurf(x, y, A, B, C) {
   return C * Math.sqrt(Math.max(0.02, 1 - (x / A) * (x / A) - (y / B) * (y / B)));
@@ -741,13 +746,12 @@ varying float vB;
 void main(){
   vec3 e = aEsfera * (1.0 + 0.05*sin(uT*1.3 + aEsfera.y*0.5) + uEnergia*0.13);
   vec3 c = aCara;
-  c.y -= aLabio * uAp * 2.05;      // el labio inferior y la mandibula caen con la voz
-  c.z += aLabio * uAp * 0.3;
-  c.x *= 1.0 - aLabio * uAp * 0.05;
+  c.y -= aLabio * uAp * 1.9;       // el labio inferior y la mandibula caen con la voz
+  c.z += aLabio * uAp * 0.25;
   float m = clamp(uMorph*1.3 - fract(aTam*57.31)*0.3, 0.0, 1.0);
   m = m*m*(3.0-2.0*m);             // cada particula llega con su propio desfase
   vec3 p = uRot * mix(e, c, m);
-  float wz = 34.0 - p.z;
+  float wz = 36.0 - p.z;
   gl_Position = vec4(p.x*uEscala, p.y*uEscala, 0.0, wz);
   gl_PointSize = aTam * uPuntos / wz;
   vB = aBrillo;
@@ -755,13 +759,73 @@ void main(){
 const FSH3 = `
 precision mediump float;
 uniform vec3 uColor;
+uniform float uLinea, uVelo;   // uVelo: las lineas plexus solo existen en el rostro
 varying float vB;
 void main(){
   vec2 d = gl_PointCoord - vec2(0.5);
-  float a = smoothstep(0.5, 0.16, length(d));
-  // curva agresiva: lo tenue casi desaparece, los rasgos brillan
-  gl_FragColor = vec4(uColor*(0.45+0.75*vB), a*(0.22+0.78*vB*vB));
+  float mascara = smoothstep(0.5, 0.16, length(d));
+  // curva agresiva en puntos: lo tenue casi desaparece, los rasgos brillan
+  float aPunto = mascara * (0.15 + 0.62*vB*vB);
+  float aLinea = (0.05 + 0.14*vB) * uVelo;
+  float a = mix(aPunto, aLinea, uLinea);
+  gl_FragColor = vec4(uColor*(0.45+0.75*vB), a);
 }`;
+
+function generarDesdeHorneado(D) {
+  // La cabeza humana esculpida con SDF en Python (assets/cara_datos.js)
+  const n = D.n;
+  const cara = b64F32(D.p);
+  const w8 = b64Bytes(D.w), b8 = b64Bytes(D.b);
+  const esfera = new Float32Array(n * 3);
+  const labio = new Float32Array(n), brillo = new Float32Array(n), tam = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const th = Math.random() * Math.PI * 2, cph = Math.random() * 2 - 1, sph = Math.sqrt(1 - cph * cph);
+    const r0 = 9.3 + Math.random();
+    esfera[i * 3] = r0 * sph * Math.cos(th);
+    esfera[i * 3 + 1] = r0 * sph * Math.sin(th);
+    esfera[i * 3 + 2] = r0 * cph;
+    labio[i] = w8[i] / 255;
+    brillo[i] = (b8[i] / 255) * 1.4;
+    tam[i] = 0.17 + Math.random() * 0.20;
+  }
+  return { esfera, cara, labio, brillo, tam, aristas: b64U16(D.e) };
+}
+
+const ATTR3 = { aEsfera: 3, aCara: 3, aLabio: 1, aBrillo: 1, aTam: 1 };
+let atr3 = {};
+
+function crearBuffers(d) {
+  const mk = arr => {
+    const b = gl3.createBuffer();
+    gl3.bindBuffer(gl3.ARRAY_BUFFER, b);
+    gl3.bufferData(gl3.ARRAY_BUFFER, arr, gl3.STATIC_DRAW);
+    return b;
+  };
+  return { aEsfera: mk(d.esfera), aCara: mk(d.cara), aLabio: mk(d.labio), aBrillo: mk(d.brillo), aTam: mk(d.tam) };
+}
+
+function activar3(bufs) {
+  for (const nombre in ATTR3) {
+    gl3.bindBuffer(gl3.ARRAY_BUFFER, bufs[nombre]);
+    gl3.enableVertexAttribArray(atr3[nombre]);
+    gl3.vertexAttribPointer(atr3[nombre], ATTR3[nombre], gl3.FLOAT, false, 0, 0);
+  }
+}
+
+function crearBuffersLineas(d) {
+  // Red plexus: cada arista duplica los atributos de sus dos extremos
+  const e = d.aristas, m = e.length;
+  const esf = new Float32Array(m * 3), car = new Float32Array(m * 3);
+  const lab = new Float32Array(m), bri = new Float32Array(m), tm = new Float32Array(m);
+  for (let k = 0; k < m; k++) {
+    const i = e[k];
+    esf.set(d.esfera.subarray(i * 3, i * 3 + 3), k * 3);
+    car.set(d.cara.subarray(i * 3, i * 3 + 3), k * 3);
+    lab[k] = d.labio[i]; bri[k] = d.brillo[i]; tm[k] = d.tam[i];
+  }
+  nLineas3 = m;
+  return crearBuffers({ esfera: esf, cara: car, labio: lab, brillo: bri, tam: tm });
+}
 
 function iniciar3D() {
   gl3 = cv3.getContext("webgl", { alpha: true, antialias: false, depth: false });
@@ -778,19 +842,17 @@ function iniciar3D() {
   if (!gl3.getProgramParameter(prog, gl3.LINK_STATUS)) throw new Error(gl3.getProgramInfoLog(prog));
   gl3.useProgram(prog);
 
-  n3 = Math.round(12000 * Math.max(0.5, S.calidad));
-  const d = generarObjetivos(n3);
-  const sube = (nombre, arr, comp) => {
-    const b = gl3.createBuffer();
-    gl3.bindBuffer(gl3.ARRAY_BUFFER, b);
-    gl3.bufferData(gl3.ARRAY_BUFFER, arr, gl3.STATIC_DRAW);
-    const l = gl3.getAttribLocation(prog, nombre);
-    gl3.enableVertexAttribArray(l);
-    gl3.vertexAttribPointer(l, comp, gl3.FLOAT, false, 0, 0);
-  };
-  sube("aEsfera", d.esfera, 3); sube("aCara", d.cara, 3);
-  sube("aLabio", d.labio, 1); sube("aBrillo", d.brillo, 1); sube("aTam", d.tam, 1);
-  for (const u of ["uT", "uMorph", "uAp", "uEnergia", "uEscala", "uPuntos", "uRot", "uColor"])
+  for (const nombre in ATTR3) atr3[nombre] = gl3.getAttribLocation(prog, nombre);
+
+  // Cabeza humana horneada si existe; si no, la máscara procedural de respaldo
+  const horneada = window.CARA_DATOS && window.CARA_DATOS.p;
+  const d = horneada ? generarDesdeHorneado(window.CARA_DATOS)
+                     : generarObjetivos(Math.round(12000 * Math.max(0.5, S.calidad)));
+  n3 = d.esfera.length / 3;
+  bufPuntos3 = crearBuffers(d);
+  if (d.aristas) bufLineas3 = crearBuffersLineas(d);
+
+  for (const u of ["uT", "uMorph", "uAp", "uEnergia", "uEscala", "uPuntos", "uRot", "uColor", "uLinea", "uVelo"])
     loc3[u] = gl3.getUniformLocation(prog, u);
   gl3.disable(gl3.DEPTH_TEST);
   gl3.enable(gl3.BLEND);
@@ -817,9 +879,9 @@ function dibujar3D(tNow, dt, energia) {
   const apObjetivo = habla ? Math.min(1, S.vozSuave * 1.5) : 0;
   apert3 += (apObjetivo - apert3) * (apObjetivo > apert3 ? 0.55 : 0.3) * dt;
 
-  // esfera: giro perezoso · rostro: vaivén sutil, siempre de frente
-  const ry = Math.sin(t * 0.2) * 0.5 * (1 - morph3) + Math.sin(t * 0.5) * 0.06 * morph3;
-  const rx = Math.cos(t * 0.2) * 0.3 * (1 - morph3) + Math.sin(t * 0.85) * 0.035 * morph3;
+  // esfera: giro perezoso · rostro: tres cuartos con vaivén sutil (como la referencia)
+  const ry = Math.sin(t * 0.2) * 0.5 * (1 - morph3) + (-0.34 + Math.sin(t * 0.5) * 0.05) * morph3;
+  const rx = Math.cos(t * 0.2) * 0.3 * (1 - morph3) + (0.03 + Math.sin(t * 0.85) * 0.03) * morph3;
   const cy = Math.cos(ry), sy = Math.sin(ry), cxr = Math.cos(rx), sxr = Math.sin(rx);
   const rot = new Float32Array([
     cy, 0, -sy,
@@ -837,6 +899,16 @@ function dibujar3D(tNow, dt, energia) {
   gl3.uniform1f(loc3.uPuntos, cv3.height * 2.125 * 0.5);
   gl3.uniformMatrix3fv(loc3.uRot, false, rot);
   gl3.uniform3f(loc3.uColor, S.pri[0] / 255, S.pri[1] / 255, S.pri[2] / 255);
+  gl3.uniform1f(loc3.uVelo, morph3);
+
+  // la red plexus primero (solo visible en el rostro), los puntos encima
+  if (nLineas3 > 0 && morph3 > 0.02) {
+    activar3(bufLineas3);
+    gl3.uniform1f(loc3.uLinea, 1);
+    gl3.drawArrays(gl3.LINES, 0, nLineas3);
+  }
+  activar3(bufPuntos3);
+  gl3.uniform1f(loc3.uLinea, 0);
   gl3.drawArrays(gl3.POINTS, 0, n3);
 }
 
