@@ -1,10 +1,23 @@
 # -*- coding: utf-8 -*-
 """Escultor de la cabeza holografica de I.R.I.S.
 
-Modela una cabeza humana con campos de distancia (SDF), muestrea su superficie
-como nube de puntos, calcula pesos de mandibula/labio (para hablar), brillos
-(silueta y rasgos) y la red de lineas 'plexus' (vecinos cercanos), y hornea todo
-en assets/cara_datos.js para el HUD. Genera previews PNG para iterar la forma.
+Construye la cabeza a partir de la MALLA FACIAL CANONICA de MediaPipe
+(assets/canonical_face_model.obj, Apache-2.0): 468 vertices y 898 triangulos de
+una cara humana promedio real. No son datos biometricos de ninguna persona: es la
+geometria facial media que la industria usa para colocar filtros.
+
+Por que asi y no con formas analiticas: una cara real no se puede componer con
+esferas y capsulas —la version anterior salia deforme por eso—. Aqui la geometria
+del rostro es real y solo se anaden craneo, orejas y cuello, que la malla canonica
+no cubre.
+
+Salidas:
+  assets/cara_datos.js  — nube de puntos, pesos de mandibula, brillos y aristas
+  *.png                 — vistas previas para iterar la forma
+
+Uso (desde la raiz del proyecto):
+  .venv\\Scripts\\python.exe esculpir_cara.py            → hornea los datos
+  .venv\\Scripts\\python.exe esculpir_cara.py --preview  → solo las vistas previas
 """
 import base64
 import sys
@@ -12,209 +25,240 @@ import numpy as np
 from scipy.spatial import cKDTree
 from PIL import Image, ImageDraw
 
-# Rutas relativas a la raíz del proyecto (ejecutar desde ahí):
-#   .venv\Scripts\python.exe esculpir_cara.py            → hornea assets/cara_datos.js
-#   .venv\Scripts\python.exe esculpir_cara.py --preview  → solo genera los PNG de vista previa
+RUTA_OBJ = "assets/canonical_face_model.obj"
 RUTA_SALIDA = "assets/cara_datos.js"
 RUTA_PREVIEW = "."
 
 rng = np.random.default_rng(7)
 
-# ---------- primitivas SDF (vectorizadas: p es (N,3)) ----------
-def sd_elipsoide(p, c, r):
-    q = (p - c) / r
-    k0 = np.linalg.norm(q, axis=1)
-    k1 = np.linalg.norm(q / r, axis=1)
-    return np.where(k1 > 1e-9, k0 * (k0 - 1.0) / np.maximum(k1, 1e-9), -np.min(r))
+# Bisagra real de la mandibula (articulacion temporomandibular, junto a las orejas)
+BISAGRA_Y, BISAGRA_Z = 0.67, -2.44
+# La boca: entre el labio superior interno (13) y el inferior interno (14)
+LINEA_BOCA_Y = -4.25
 
-def sd_esfera(p, c, r):
-    return np.linalg.norm(p - c, axis=1) - r
 
-def sd_capsula(p, a, b, r):
-    a = np.asarray(a, float); b = np.asarray(b, float)
-    pa = p - a; ba = b - a
-    h = np.clip((pa @ ba) / (ba @ ba), 0, 1)
-    return np.linalg.norm(pa - np.outer(h, ba), axis=1) - r
+# ---------- carga de la malla canonica ----------
+def cargar_obj(ruta):
+    V, F = [], []
+    for linea in open(ruta, encoding="utf-8"):
+        if linea.startswith("v "):
+            V.append([float(x) for x in linea.split()[1:4]])
+        elif linea.startswith("f "):
+            F.append([int(t.split("/")[0]) - 1 for t in linea.split()[1:4]])
+    return np.array(V, float), np.array(F, int)
 
-def smin(a, b, k):
-    h = np.clip(0.5 + 0.5 * (b - a) / k, 0, 1)
-    return b * (1 - h) + a * h - k * h * (1 - h)
 
-def smax(a, b, k):        # interseccion suave con -b => resta
-    return -smin(-a, -b, k)
+def aristas_de_caras(F):
+    e = set()
+    for a, b, c in F:
+        for i, j in ((a, b), (b, c), (c, a)):
+            e.add((min(i, j), max(i, j)))
+    return np.array(sorted(e), dtype=np.int32)
 
-# ---------- LA CABEZA ----------
-def cabeza(p):
-    # craneo (bien redondo por detras, como la referencia)
-    d = sd_elipsoide(p, (0, 3.2, -0.8), (6.9, 8.2, 7.6))
-    # pomulos
-    d = smin(d, sd_esfera(p, (4.3, 1.2, 3.4), 1.9), 1.6)
-    d = smin(d, sd_esfera(p, (-4.3, 1.2, 3.4), 1.9), 1.6)
-    # arco superciliar (cejas oseas)
-    d = smin(d, sd_capsula(p, (-3.3, 3.9, 5.1), (3.3, 3.9, 5.1), 1.30), 1.2)
-    # mandibula y menton
-    d = smin(d, sd_capsula(p, (4.8, 0.2, -0.4), (1.5, -6.4, 3.2), 1.65), 1.6)
-    d = smin(d, sd_capsula(p, (-4.8, 0.2, -0.4), (-1.5, -6.4, 3.2), 1.65), 1.6)
-    d = smin(d, sd_esfera(p, (0, -6.7, 3.8), 1.85), 1.5)
-    # maxilar (base de la boca)
-    d = smin(d, sd_esfera(p, (0, -2.9, 4.5), 2.0), 1.8)
-    # nariz: caballete, punta y aletas
-    d = smin(d, sd_capsula(p, (0, 3.4, 5.8), (0, -0.7, 7.8), 0.72), 1.0)
-    d = smin(d, sd_esfera(p, (0, -1.1, 8.0), 0.98), 0.8)
-    d = smin(d, sd_esfera(p, (0.95, -1.55, 7.0), 0.60), 0.6)
-    d = smin(d, sd_esfera(p, (-0.95, -1.55, 7.0), 0.60), 0.6)
-    # labios
-    d = smin(d, sd_capsula(p, (-1.85, -3.10, 6.55), (1.85, -3.10, 6.55), 0.60), 0.7)
-    d = smin(d, sd_capsula(p, (-1.55, -4.15, 6.60), (1.55, -4.15, 6.60), 0.70), 0.7)
-    # cuello
-    d = smin(d, sd_capsula(p, (0, -6.3, -1.6), (0, -12.5, -2.4), 2.85), 2.4)
-    # orejas
-    d = smin(d, sd_elipsoide(p, (7.0, 1.4, -1.6), (0.7, 2.0, 1.4)), 0.9)
-    d = smin(d, sd_elipsoide(p, (-7.0, 1.4, -1.6), (0.7, 2.0, 1.4)), 0.9)
-    # cuencas de los ojos (se restan) y globos oculares (se suman)
-    d = smax(d, -sd_esfera(p, (2.85, 2.5, 5.95), 1.72), 0.9)
-    d = smax(d, -sd_esfera(p, (-2.85, 2.5, 5.95), 1.72), 0.9)
-    d = smin(d, sd_esfera(p, (2.85, 2.45, 4.95), 1.42), 0.5)
-    d = smin(d, sd_esfera(p, (-2.85, 2.45, 4.95), 1.42), 0.5)
-    # surco entre labios (linea de la boca)
-    d = smax(d, -sd_capsula(p, (-1.95, -3.62, 7.15), (1.95, -3.62, 7.15), 0.24), 0.35)
-    return d
 
-def gradiente(p, h=0.02):
-    g = np.zeros_like(p)
-    for i in range(3):
-        e = np.zeros(3); e[i] = h
-        g[:, i] = (cabeza(p + e) - cabeza(p - e)) / (2 * h)
-    return g
+def muestrear_triangulos(V, F, n):
+    """Puntos repartidos por area sobre la superficie real de la cara."""
+    A, B, C = V[F[:, 0]], V[F[:, 1]], V[F[:, 2]]
+    areas = 0.5 * np.linalg.norm(np.cross(B - A, C - A), axis=1)
+    idx = rng.choice(len(F), n, p=areas / areas.sum())
+    u = rng.random((n, 1)); v = rng.random((n, 1))
+    fuera = (u + v) > 1
+    u[fuera] = 1 - u[fuera]; v[fuera] = 1 - v[fuera]
+    return A[idx] + u * (B[idx] - A[idx]) + v * (C[idx] - A[idx])
 
-# ---------- muestreo de la superficie ----------
-def muestrear(n_obj=9000, lote=60000, max_iter=40):
-    puntos = []
-    for _ in range(max_iter):
-        p = rng.uniform((-9.5, -12.8, -9.5), (9.5, 12.5, 10.5), (lote, 3))
-        d = cabeza(p)
-        cerca = np.abs(d) < 2.2
-        p = p[cerca]
-        for _ in range(5):                     # proyeccion de Newton a la superficie
-            d = cabeza(p)
-            g = gradiente(p)
-            gn = np.maximum(np.linalg.norm(g, axis=1, keepdims=True), 1e-6)
-            p = p - g / gn * d[:, None] * 0.9
-        d = cabeza(p)
-        p = p[np.abs(d) < 0.03]
-        puntos.append(p)
-        if sum(len(q) for q in puntos) > n_obj * 3:
-            break
-    p = np.concatenate(puntos)
-    # adelgazar para densidad uniforme
-    arbol = cKDTree(p)
-    vivos = np.ones(len(p), bool)
-    dmin = 0.30
-    for i in np.argsort(rng.random(len(p))):
-        if not vivos[i]:
-            continue
-        for j in arbol.query_ball_point(p[i], dmin):
-            if j != i:
-                vivos[j] = False
-    p = p[vivos]
-    if len(p) > n_obj:
-        p = p[rng.choice(len(p), n_obj, replace=False)]
-    return p
 
-def pesos_y_brillo(p):
-    n = gradiente(p)
-    n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-6)
-    x, y, z = p[:, 0], p[:, 1], p[:, 2]
+# ---------- craneo, orejas y cuello (lo que la malla facial no trae) ----------
+def craneo(V_cara, n):
+    """Elipsoide detras de la cara; se descartan los puntos que la atravesarian."""
+    centro = np.array([0.0, 1.2, 0.6])
+    radios = np.array([7.9, 9.3, 8.4])
+    arbol = cKDTree(V_cara)
+    salida = []
+    while sum(len(s) for s in salida) < n:
+        m = n * 3
+        th = rng.random(m) * 2 * np.pi
+        cph = rng.random(m) * 2 - 1
+        sph = np.sqrt(1 - cph ** 2)
+        p = centro + np.stack([radios[0] * sph * np.cos(th),
+                               radios[1] * cph,
+                               radios[2] * sph * np.sin(th)], 1)
+        d, i = arbol.query(p)
+        # fuera si esta por delante de la cara (la atravesaria) o pegado a ella
+        delante = p[:, 2] > V_cara[i][:, 2] + 0.25
+        salida.append(p[~delante & (d > 0.9)])
+    return np.concatenate(salida)[:n]
 
-    # ---- peso de habla: labio inferior + mandibula (bisagra en la oreja) ----
-    d_labio_inf = np.linalg.norm(p - (0, -4.15, 6.6), axis=1)
-    labio_inf = np.clip(1.6 - d_labio_inf * 0.55, 0, 1)
-    frente = np.clip((z + 1.5) / 6.0, 0, 1)          # solo la parte delantera cae
-    mandibula = np.clip((-1.2 - y) / 2.2, 0, 1) * np.clip((y + 8.2) / 2.0, 0, 1) * frente
-    w = np.clip(np.maximum(labio_inf, mandibula * 0.85), 0, 1)
-    d_labio_sup = np.linalg.norm(p - (0, -3.05, 6.55), axis=1)
-    w = np.where((d_labio_sup < 1.1) & (y > -3.6), 0.06, w)   # labio superior casi fijo
 
-    # ---- brillo: silueta frontal + rasgos ----
-    rim = (1 - np.abs(n[:, 2])) ** 1.6                # borde visto de frente
-    b = 0.30 + 0.55 * rim
-    rasgos = np.minimum.reduce([
-        np.abs(sd_capsula(p, (-1.85, -3.10, 6.55), (1.85, -3.10, 6.55), 0.60)),
-        np.abs(sd_capsula(p, (-1.55, -4.15, 6.60), (1.55, -4.15, 6.60), 0.70)),
-        np.abs(sd_esfera(p, (2.85, 2.45, 4.95), 1.42)),
-        np.abs(sd_esfera(p, (-2.85, 2.45, 4.95), 1.42)),
-        np.abs(sd_esfera(p, (0, -1.1, 8.0), 0.98)),
-        np.abs(sd_capsula(p, (-3.3, 3.9, 5.1), (3.3, 3.9, 5.1), 1.30)),
-    ])
-    b += np.clip(0.62 - rasgos * 1.35, 0, 0.42)
-    b += np.where(y < -9.5, -0.16, 0) + np.where(y < -11.0, -0.10, 0)               # el cuello se desvanece
-    return np.clip(w, 0, 1), np.clip(b, 0.05, 1.4), n
+def orejas(n):
+    p = []
+    for lado in (-1, 1):
+        c = np.array([lado * 7.5, 0.9, -2.2])
+        th = rng.random(n // 2) * 2 * np.pi
+        cph = rng.random(n // 2) * 2 - 1
+        sph = np.sqrt(1 - cph ** 2)
+        q = c + np.stack([0.55 * sph * np.cos(th), 2.1 * cph, 1.5 * sph * np.sin(th)], 1)
+        p.append(q)
+    return np.concatenate(p)
 
-def red_plexus(p, k=3, dmax=1.45, tope=13000):
-    arbol = cKDTree(p)
-    dist, idx = arbol.query(p, k=k + 1)
-    aristas = set()
-    for i in range(len(p)):
-        for j in range(1, k + 1):
-            if dist[i, j] < dmax:
-                a, b2 = sorted((i, idx[i, j]))
-                aristas.add((a, b2))
-    aristas = np.array(sorted(aristas), dtype=np.uint16)
-    if len(aristas) > tope:
-        aristas = aristas[rng.choice(len(aristas), tope, replace=False)]
-    return aristas
 
-# ---------- preview PNG ----------
-def preview(p, b, aristas, nombre, yaw):
+def cuello(n):
+    a = np.array([0.0, -7.5, 0.4]); b = np.array([0.0, -14.5, -0.6])
+    t = rng.random(n)[:, None]
+    eje = a + t * (b - a)
+    r = 3.15 - 0.35 * t[:, 0]
+    th = rng.random(n) * 2 * np.pi
+    return eje + np.stack([r * np.cos(th), np.zeros(n), r * np.sin(th) * 1.05], 1)
+
+
+def ojos(n):
+    """Globos oculares: la malla canonica solo trae el contorno de los parpados."""
+    p = []
+    for lado in (-1, 1):
+        c = np.array([lado * 3.15, 2.75, 2.55])
+        th = rng.random(n // 2) * 2 * np.pi
+        cph = rng.random(n // 2) * 2 - 1
+        sph = np.sqrt(1 - cph ** 2)
+        q = c + 1.30 * np.stack([sph * np.cos(th), cph, sph * np.sin(th)], 1)
+        p.append(q[q[:, 2] > c[2] - 0.2])      # solo la mitad visible
+    return np.concatenate(p)
+
+
+# ---------- pesos de habla y brillo ----------
+def peso_mandibula(p, es_cuello):
+    """1 en todo lo que cuelga de la mandibula, 0 del labio superior hacia arriba."""
+    y = p[:, 1]
+    t = np.clip((LINEA_BOCA_Y - y) / 0.75, 0, 1)
+    w = t * t * (3 - 2 * t)                    # transicion suave justo en la boca
+    w[es_cuello] = 0.0                         # el cuello no se mueve
+    return w
+
+
+def brillo(p, V, idx_rasgos, es_nodo, es_ojo, es_cuello):
+    b = np.full(len(p), 0.22)
+    # realce de rasgos: cerca de labios, ojos, nariz y cejas de la malla real
+    arbol = cKDTree(V[idx_rasgos])
+    d, _ = arbol.query(p)
+    b += np.clip(0.75 - d * 0.85, 0, 0.62)
+    # silueta: los puntos mas laterales o mas altos destacan
+    r = np.linalg.norm(p[:, [0, 1]] - np.array([0, 0.5]), axis=1)
+    b += np.clip((r - 6.6) * 0.16, 0, 0.30)
+    b[es_nodo] += 0.42                         # los vertices de la malla son los nodos
+    b[es_ojo] = 1.15                           # iris encendido
+    b[es_cuello] *= 0.55                       # el cuello se desvanece
+    b -= np.clip((-9.5 - p[:, 1]) * 0.10, 0, 0.18)
+    return np.clip(b, 0.05, 1.4)
+
+
+# ---------- vista previa ----------
+def preview(p, b, aristas, nombre, yaw, ap=0.0, w=None, bisagra=(BISAGRA_Y, BISAGRA_Z)):
+    if ap > 0 and w is not None:                # simular la boca abierta
+        p = p.copy()
+        by, bz = bisagra
+        dy = p[:, 1] - by; dz = p[:, 2] - bz
+        ang = w * ap * 0.34
+        p[:, 1] = by + dy * np.cos(ang) - dz * np.sin(ang)
+        p[:, 2] = bz + dy * np.sin(ang) + dz * np.cos(ang)
     cy, sy = np.cos(yaw), np.sin(yaw)
     R = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
     q = p @ R.T
-    ancho, alto = 640, 760
-    esc = 24.0
+    ancho, alto, esc = 640, 780, 25.0
     xs = (q[:, 0] * esc + ancho / 2).astype(int)
-    ys = (alto / 2 - q[:, 1] * esc - 40).astype(int)
-    orden = np.argsort(q[:, 2])
+    ys = (alto / 2 - q[:, 1] * esc - 30).astype(int)
     img = Image.new("RGB", (ancho, alto), (3, 6, 10))
     dib = ImageDraw.Draw(img, "RGBA")
-    if aristas is not None:
-        for a, c in aristas[:: max(1, len(aristas) // 5000)]:
-            dib.line([(xs[a], ys[a]), (xs[c], ys[c])], fill=(0, 170, 210, 38), width=1)
-    for i in orden:
+    for a1, a2 in aristas:
+        prof = np.clip((q[a1, 2] + 10) / 20, 0.15, 1)
+        dib.line([(xs[a1], ys[a1]), (xs[a2], ys[a2])],
+                 fill=(0, int(150 * prof), int(190 * prof), 70), width=1)
+    for i in np.argsort(q[:, 2]):
         v = float(np.clip(b[i], 0, 1.3))
         prof = float(np.clip((q[i, 2] + 10) / 20, 0.25, 1))
-        col = (int(30 * v * prof), int(215 * v * prof), int(255 * v * prof), 220)
-        dib.ellipse([xs[i] - 1, ys[i] - 1, xs[i] + 1, ys[i] + 1], fill=col)
-    img.save(f"{RUTA_PREVIEW}\\{nombre}.png")
+        r = 1 if v < 0.7 else 2
+        dib.ellipse([xs[i] - r, ys[i] - r, xs[i] + r, ys[i] + r],
+                    fill=(int(40 * v * prof), int(220 * v * prof), int(255 * v * prof), 230))
+    img.save(f"{RUTA_PREVIEW}/{nombre}.png")
 
-# ---------- hornear ----------
-def hornear(p, w, b, aristas):
+
+def hornear(p, w, b, aristas, bisagra):
     b64 = lambda a: base64.b64encode(a.tobytes()).decode()
-    contenido = (
-        "// Generado por esculpir_cara.py — cabeza humana SDF muestreada (no editar a mano)\n"
+    txt = (
+        "// Generado por esculpir_cara.py a partir de la malla facial canonica de\n"
+        "// MediaPipe (Apache-2.0). No editar a mano.\n"
         "window.CARA_DATOS = {\n"
         f"  n: {len(p)},\n"
         f"  p: \"{b64(p.astype(np.float32))}\",\n"
         f"  w: \"{b64((w * 255).astype(np.uint8))}\",\n"
         f"  b: \"{b64((np.clip(b, 0, 1.4) / 1.4 * 255).astype(np.uint8))}\",\n"
         f"  e: \"{b64(aristas.astype(np.uint16))}\",\n"
+        "  bisagra: [%.3f, %.3f],\n" % (bisagra[0], bisagra[1]) +
         "};\n"
     )
-    with open(RUTA_SALIDA, "w", encoding="utf-8") as f:
-        f.write(contenido)
-    print(f"horneado: {len(p)} puntos, {len(aristas)} aristas -> {RUTA_SALIDA} ({len(contenido)//1024} KB)")
+    open(RUTA_SALIDA, "w", encoding="utf-8").write(txt)
+    print(f"horneado: {len(p)} puntos, {len(aristas)} aristas -> {RUTA_SALIDA} ({len(txt)//1024} KB)")
+
 
 if __name__ == "__main__":
-    solo_preview = "--preview" in sys.argv
-    print("muestreando superficie...")
-    p = muestrear()
-    print(f"  {len(p)} puntos")
-    w, b, n = pesos_y_brillo(p)
-    print("tejiendo la red plexus...")
-    aristas = red_plexus(p)
-    print(f"  {len(aristas)} aristas")
-    preview(p, b, aristas, "cara_frente", 0.0)
-    preview(p, b, aristas, "cara_tres_cuartos", 0.45)
-    preview(p, b, aristas, "cara_perfil", 1.25)
-    print("previews listos")
-    if not solo_preview:
-        hornear(p, w, b, aristas)
+    V, F = cargar_obj(RUTA_OBJ)
+    print(f"malla canonica: {len(V)} vertices, {len(F)} triangulos")
+
+    e_malla = aristas_de_caras(F)
+    print(f"aristas reales de la malla: {len(e_malla)}")
+
+    # rasgos para el realce de brillo (labios, ojos, nariz, cejas)
+    idx_rasgos = np.array([
+        13, 14, 61, 291, 0, 17, 78, 308, 82, 312, 87, 317,           # labios
+        33, 133, 159, 145, 362, 263, 386, 374, 157, 384,             # ojos
+        1, 2, 4, 5, 6, 168, 197, 195, 94, 331, 102,                  # nariz
+        70, 63, 105, 66, 107, 336, 296, 334, 293, 300,               # cejas
+    ])
+
+    # --- nube: nodos de la malla + relleno de la cara + craneo + orejas + cuello + ojos ---
+    n_relleno, n_craneo, n_orejas, n_cuello, n_ojos = 3800, 2000, 260, 700, 320
+    p_relleno = muestrear_triangulos(V, F, n_relleno)
+    p_craneo = craneo(V, n_craneo)
+    p_orejas = orejas(n_orejas)
+    p_cuello = cuello(n_cuello)
+    p_ojos = ojos(n_ojos)
+
+    p = np.concatenate([V, p_relleno, p_craneo, p_orejas, p_cuello, p_ojos])
+    n_nodos = len(V)
+    es_nodo = np.zeros(len(p), bool); es_nodo[:n_nodos] = True
+    ini_cuello = n_nodos + n_relleno + n_craneo + n_orejas
+    es_cuello = np.zeros(len(p), bool); es_cuello[ini_cuello:ini_cuello + n_cuello] = True
+    es_ojo = np.zeros(len(p), bool); es_ojo[ini_cuello + n_cuello:] = True
+
+    # ⚠️ Pesos y brillo se calculan ANTES de centrar: sus referencias (la línea de
+    # la boca, los rasgos) viven en las coordenadas de la malla canónica.
+    w = peso_mandibula(p, es_cuello)
+    b = brillo(p, V, idx_rasgos, es_nodo, es_ojo, es_cuello)
+
+    # centrar la cabeza en el origen para que el HUD la encuadre bien;
+    # la bisagra de la mandíbula viaja con ella
+    desp = np.array([0.0, (p[:, 1].max() + p[:, 1].min()) / 2, p[:, 2].mean()])
+    p -= desp
+    bisagra = (BISAGRA_Y - desp[1], BISAGRA_Z - desp[2])
+
+    # --- aristas: las reales de la cara + una red ligera para craneo y cuello ---
+    resto = np.where(~es_nodo & ~es_ojo)[0]
+    arbol = cKDTree(p[resto])
+    dist, vec = arbol.query(p[resto], k=3)
+    extra = set()
+    for i in range(len(resto)):
+        for j in (1, 2):
+            if dist[i, j] < 1.25:
+                a, c = sorted((int(resto[i]), int(resto[vec[i, j]])))
+                extra.add((a, c))
+    extra = np.array(sorted(extra), dtype=np.int32)
+    if len(extra) > 6500:
+        extra = extra[rng.choice(len(extra), 6500, replace=False)]
+    aristas = np.concatenate([e_malla, extra])
+    print(f"aristas totales: {len(aristas)} (malla {len(e_malla)} + red {len(extra)})")
+
+    preview(p, b, aristas, "cara_frente", 0.0, bisagra=bisagra)
+    preview(p, b, aristas, "cara_tres_cuartos", 0.42, bisagra=bisagra)
+    preview(p, b, aristas, "cara_hablando", 0.42, ap=1.0, w=w, bisagra=bisagra)
+    print(f"vistas previas listas (peso de mandibula: {w.max():.2f} max, "
+          f"{(w > 0.5).sum()} puntos moviles)")
+
+    if "--preview" not in sys.argv:
+        hornear(p, w, b, aristas, bisagra)

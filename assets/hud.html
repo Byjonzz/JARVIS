@@ -248,6 +248,7 @@ const S = {
   calidad:0.85,               // escala de partículas (performance_quality/100)
   bridge:null,
   webgl:false,                // núcleo 3D activo (esfera→rostro); si falla, queda el 2D
+  encuadre:[1.0, 0.0],        // [escala, desplazamiento Y] del rostro (se calibra al cargar)
 };
 const hex2rgb = h => { const n=parseInt(h.slice(1),16); return [(n>>16)&255,(n>>8)&255,n&255]; };
 const css = document.documentElement.style;
@@ -741,13 +742,20 @@ const VSH3 = `
 attribute vec3 aEsfera; attribute vec3 aCara;
 attribute float aLabio; attribute float aBrillo; attribute float aTam;
 uniform float uT, uMorph, uAp, uEnergia, uEscala, uPuntos;
+uniform vec2 uBisagra;           // eje real de la articulacion de la mandibula
+uniform vec2 uEncuadre;          // escala y desplazamiento vertical del rostro
 uniform mat3 uRot;
 varying float vB;
 void main(){
   vec3 e = aEsfera * (1.0 + 0.05*sin(uT*1.3 + aEsfera.y*0.5) + uEnergia*0.13);
   vec3 c = aCara;
-  c.y -= aLabio * uAp * 1.9;       // el labio inferior y la mandibula caen con la voz
-  c.z += aLabio * uAp * 0.25;
+  // 🦴 La mandibula ROTA sobre su bisagra (como una boca real): el menton baja
+  // y retrocede en arco. Antes era una traslacion recta y se notaba falso.
+  float ang = aLabio * uAp * 0.42;
+  float dy = c.y - uBisagra.x, dz = c.z - uBisagra.y;
+  c.y = uBisagra.x + dy*cos(ang) - dz*sin(ang);
+  c.z = uBisagra.y + dy*sin(ang) + dz*cos(ang);
+  c = c * uEncuadre.x + vec3(0.0, uEncuadre.y, 0.0);   // encuadre del rostro
   float m = clamp(uMorph*1.3 - fract(aTam*57.31)*0.3, 0.0, 1.0);
   m = m*m*(3.0-2.0*m);             // cada particula llega con su propio desfase
   vec3 p = uRot * mix(e, c, m);
@@ -852,8 +860,23 @@ function iniciar3D() {
   bufPuntos3 = crearBuffers(d);
   if (d.aristas) bufLineas3 = crearBuffersLineas(d);
 
-  for (const u of ["uT", "uMorph", "uAp", "uEnergia", "uEscala", "uPuntos", "uRot", "uColor", "uLinea", "uVelo"])
+  for (const u of ["uT", "uMorph", "uAp", "uEnergia", "uEscala", "uPuntos", "uRot",
+                   "uColor", "uLinea", "uVelo", "uBisagra", "uEncuadre"])
     loc3[u] = gl3.getUniformLocation(prog, u);
+  const bis = (window.CARA_DATOS && window.CARA_DATOS.bisagra) || [0, 0];
+  gl3.uniform2f(loc3.uBisagra, bis[0], bis[1]);
+
+  // 🎯 Encuadre automático: la cabeza horneada incluye cuello, así que se escala
+  // y sube para que la CARA (ojos→mentón) ocupe el mismo hueco que la esfera.
+  if (horneada) {
+    const c = d.cara;
+    let yMin = 1e9, yMax = -1e9;
+    for (let i = 1; i < c.length; i += 3) { if (c[i] < yMin) yMin = c[i]; if (c[i] > yMax) yMax = c[i]; }
+    const yOjos = yMax - (yMax - yMin) * 0.30;       // altura aproximada de los ojos
+    const yBoca = yMin + (yMax - yMin) * 0.28;       // altura aproximada de la boca
+    const centroCara = (yOjos + yBoca) / 2;
+    S.encuadre = [1.30, -centroCara * 1.30];
+  }
   gl3.disable(gl3.DEPTH_TEST);
   gl3.enable(gl3.BLEND);
   gl3.blendFunc(gl3.SRC_ALPHA, gl3.ONE);   // brillo aditivo
@@ -900,6 +923,7 @@ function dibujar3D(tNow, dt, energia) {
   gl3.uniformMatrix3fv(loc3.uRot, false, rot);
   gl3.uniform3f(loc3.uColor, S.pri[0] / 255, S.pri[1] / 255, S.pri[2] / 255);
   gl3.uniform1f(loc3.uVelo, morph3);
+  gl3.uniform2f(loc3.uEncuadre, S.encuadre[0], S.encuadre[1]);
 
   // la red plexus primero (solo visible en el rostro), los puntos encima
   if (nLineas3 > 0 && morph3 > 0.02) {

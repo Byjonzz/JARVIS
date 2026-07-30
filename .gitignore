@@ -30,3 +30,7 @@ config/session_reanudar.json
 
 # Captura temporal del módulo de visión
 temp_vision.png
+# Vistas previas del escultor de la cara (se regeneran con esculpir_cara.py)
+cara_frente.png
+cara_tres_cuartos.png
+cara_hablando.png
