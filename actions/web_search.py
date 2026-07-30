@@ -1,4 +1,5 @@
 from duckduckgo_search import DDGS
+import time
 
 def web_search(parameters: dict) -> str:
     query = parameters.get("query", "").strip()
@@ -7,10 +8,13 @@ def web_search(parameters: dict) -> str:
         
     try:
         resultados = []
-        # Buscamos en DuckDuckGo de forma silenciosa
-        with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=3):
-                resultados.append(f"Título: {r.get('title')}\nResumen: {r.get('body')}\nEnlace: {r.get('href')}")
+        # Usamos backend html para mayor estabilidad y añadimos timeout
+        with DDGS(timeout=20) as ddgs:
+            for r in ddgs.text(query, max_results=3, backend="html"):
+                title = r.get('title', 'Sin título')
+                body = r.get('body', 'Sin resumen')
+                href = r.get('href', 'Sin enlace')
+                resultados.append(f"Título: {title}\nResumen: {body}\nEnlace: {href}")
                 
         if not resultados:
             return f"No se encontraron resultados en internet para: {query}"
@@ -19,7 +23,23 @@ def web_search(parameters: dict) -> str:
         return texto_final
         
     except Exception as e:
-        return f"Error en la búsqueda web: {e}"
+        # Fallback: intentar con backend lite si html falla
+        try:
+            resultados = []
+            with DDGS(timeout=20) as ddgs:
+                for r in ddgs.text(query, max_results=3, backend="lite"):
+                    title = r.get('title', 'Sin título')
+                    body = r.get('body', 'Sin resumen')
+                    href = r.get('href', 'Sin enlace')
+                    resultados.append(f"Título: {title}\nResumen: {body}\nEnlace: {href}")
+            
+            if not resultados:
+                return f"No se encontraron resultados en internet para: {query}"
+                
+            texto_final = f"Resultados encontrados para '{query}':\n\n" + "\n---\n".join(resultados)
+            return texto_final
+        except Exception as e2:
+            return f"Error en la búsqueda web: {e2}"
 
 # 🟢 EL MANUAL AUTODESCUBRIBLE
 TOOL_DEF = {

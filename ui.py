@@ -29,10 +29,10 @@ THEMES = {
     "white": {"PRI": "#FFFFFF", "PRI_DIM": "#CCCCCC", "BG": "#000000", "TEXT": "#FFFFFF", "BORDER": "rgba(255, 255, 255, 0.45)"}
 }
 
-C_PRI = THEMES["green"]["PRI"]
-C_PRI_DIM = THEMES["green"]["PRI_DIM"]
-C_TEXT = THEMES["green"]["TEXT"]
-C_BORDER = THEMES["green"]["BORDER"]
+C_PRI = THEMES["white"]["PRI"]
+C_PRI_DIM = THEMES["white"]["PRI_DIM"]
+C_TEXT = THEMES["white"]["TEXT"]
+C_BORDER = THEMES["white"]["BORDER"]
 
 def set_global_theme(theme_name):
     global C_PRI, C_PRI_DIM, C_TEXT, C_BORDER
