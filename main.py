@@ -22,6 +22,7 @@ import websockets
 
 from ui import JarvisUI
 from config_manager import load_api_keys
+import audio_devices
 from actions import neural_learner
 from actions import voice_guard
 
@@ -101,61 +102,24 @@ class IRISCore:
 
         self.mic_idx = None
         self.spk_idx = None
+        self.mic_nombre = "desconocido"
+        self._nivel_pico = 0.0        # pico de señal del micrófono entre revisiones
+        self._silencio_avisado = False
 
         try:
-            dispositivos = sd.query_devices()
+            # 🟢 La elección vive en audio_devices.py, compartida con guardia.py:
+            # Ajustes manda, y si no hay nada configurado se prefiere un micrófono
+            # FÍSICO (nunca un virtual mudo ni la línea de audio del juego).
+            log_guardia(f"⚙️ Micrófonos disponibles: {audio_devices.describir_entradas()}")
 
-            # 🟢 PRIORIDAD 1: Los dispositivos elegidos en la ventana de Ajustes
-            def buscar_por_nombre(nombre_cfg, es_entrada):
-                if not nombre_cfg: return None
-                objetivo = nombre_cfg.strip().lower()
-                for i, d in enumerate(dispositivos):
-                    canales = d['max_input_channels'] if es_entrada else d['max_output_channels']
-                    if canales > 0 and "MME" in sd.query_hostapis(d['hostapi'])['name']:
-                        nombre_dev = d['name'].strip().lower()
-                        if objetivo in nombre_dev or nombre_dev in objetivo:
-                            return i
-                return None
+            self.mic_idx, mic_nombre, aviso_mic = audio_devices.elegir_microfono(self.cfg.get("mic_device_name", ""))
+            self.spk_idx, spk_nombre, aviso_spk = audio_devices.elegir_bocina(self.cfg.get("speaker_device_name", ""))
+            self.mic_nombre = mic_nombre or "desconocido"
 
-            self.mic_idx = buscar_por_nombre(self.cfg.get("mic_device_name", ""), True)
-            self.spk_idx = buscar_por_nombre(self.cfg.get("speaker_device_name", ""), False)
-
-            if self.mic_idx is None:
-                for i, d in enumerate(dispositivos):
-                    if d['max_input_channels'] > 0 and "MME" in sd.query_hostapis(d['hostapi'])['name']:
-                        nombre_mic = d['name'].upper()
-                        if "ASTRO" in nombre_mic and "GAME" in nombre_mic:
-                            self.mic_idx = i; break
-            if self.mic_idx is None:
-                for i, d in enumerate(dispositivos):
-                    if d['max_input_channels'] > 0 and "MME" in sd.query_hostapis(d['hostapi'])['name']:
-                        nombre_mic = d['name'].upper()
-                        if "ASTRO" in nombre_mic and "VOICE" not in nombre_mic:
-                            self.mic_idx = i; break
-            if self.mic_idx is None:
-                for i, d in enumerate(dispositivos):
-                    if d['max_input_channels'] > 0 and "MME" in sd.query_hostapis(d['hostapi'])['name']:
-                        self.mic_idx = i; break
-            
-            if self.spk_idx is None:
-                for i, d in enumerate(dispositivos):
-                    if d['max_output_channels'] > 0 and "MME" in sd.query_hostapis(d['hostapi'])['name']:
-                        nombre_spk = d['name'].upper()
-                        if "ASTRO" in nombre_spk and "GAME" in nombre_spk:
-                            self.spk_idx = i; break
-            if self.spk_idx is None:
-                for i, d in enumerate(dispositivos):
-                    if d['max_output_channels'] > 0 and "MME" in sd.query_hostapis(d['hostapi'])['name']:
-                        nombre_spk = d['name'].upper()
-                        if "ASTRO" in nombre_spk and "VOICE" not in nombre_spk:
-                            self.spk_idx = i; break
-            if self.spk_idx is None:
-                for i, d in enumerate(dispositivos):
-                    if d['max_output_channels'] > 0 and "MME" in sd.query_hostapis(d['hostapi'])['name']:
-                        self.spk_idx = i; break
-
-            if self.mic_idx is not None: log_guardia(f"⚙️ MICRÓFONO ASIGNADO: {dispositivos[self.mic_idx]['name']}")
-            if self.spk_idx is not None: log_guardia(f"⚙️ BOCINA ASIGNADA: {dispositivos[self.spk_idx]['name']}")
+            if self.mic_idx is not None: log_guardia(f"⚙️ MICRÓFONO ASIGNADO: [{self.mic_idx}] {mic_nombre}")
+            if aviso_mic: log_guardia(f"⚠️ {aviso_mic}")
+            if self.spk_idx is not None: log_guardia(f"⚙️ BOCINA ASIGNADA: [{self.spk_idx}] {spk_nombre}")
+            if aviso_spk: log_guardia(f"⚠️ {aviso_spk}")
         except Exception as e:
             log_guardia(f"⚠️ Fallo hardware. Error: {e}")
 
@@ -297,7 +261,8 @@ class IRISCore:
                         
                 vol_max = float(np.max(np.abs(indata.astype(np.int32))))
                 nivel = vol_max / 32768.0
-                
+                if nivel > self._nivel_pico: self._nivel_pico = nivel
+
                 if self.loop: self.loop.call_soon_threadsafe(safe_update_audio)
                 
                 data_bytes = bytes(indata)
@@ -414,17 +379,55 @@ class IRISCore:
 
             except Exception as e: pass
 
+        # 🟢 Apertura a prueba de fallos: si el segundo intento también reventaba,
+        # la excepción se comía la tarea entera y I.R.I.S. se quedaba sorda SIN
+        # decir nada (la UI seguía viéndose perfecta). Ahora siempre lo avisamos.
         stream = None
-        try:
-            stream = sd.InputStream(device=self.mic_idx, samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=4000, callback=callback)
-        except:
-            stream = sd.InputStream(samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16", blocksize=4000, callback=callback)
+        intentos = [("micrófono asignado", {"device": self.mic_idx}), ("micrófono por defecto", {})]
+        for descripcion, extra in intentos:
+            try:
+                stream = sd.InputStream(samplerate=SEND_SAMPLE_RATE, channels=CHANNELS, dtype="int16",
+                                        blocksize=4000, callback=callback, **extra)
+                break
+            except Exception as e:
+                log_guardia(f"⚠️ No pude abrir el {descripcion}: {e}")
 
-        if stream is not None:
-            with stream:
-                while True: await asyncio.sleep(1)
-        else:
+        if stream is None:
+            aviso = ("SIN MICRÓFONO: no pude abrir ninguna entrada de audio, así que no puedo oírte. "
+                     "Cierra las apps que estén usando el micrófono (Voicemod, Discord, OBS) y reinícieme.")
+            log_guardia(f"❌ {aviso}")
+            if self.loop: self.loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, f"⚠️ {aviso}")
             while True: await asyncio.sleep(1)
+
+        with stream:
+            while True: await asyncio.sleep(1)
+
+    async def _vigilar_microfono(self):
+        """🔇 Detector de sordera. Un micrófono virtual apagado (Voicemod, Steam,
+        NVIDIA Broadcast) se abre sin error pero entrega silencio digital: parecería
+        que I.R.I.S. te ignora. En vez de callar, lo decimos con nombre y apellido."""
+        await asyncio.sleep(8)
+        segundos_mudo = 0
+        while True:
+            await asyncio.sleep(4)
+            pico, self._nivel_pico = self._nivel_pico, 0.0
+
+            if self.estado in ("HABLANDO", "ENROLANDO"):
+                continue
+
+            if pico < 0.0015:
+                segundos_mudo += 4
+            else:
+                segundos_mudo = 0
+                self._silencio_avisado = False
+
+            if segundos_mudo >= 20 and not self._silencio_avisado:
+                self._silencio_avisado = True
+                aviso = (f"El micrófono '{self.mic_nombre}' no está entregando señal alguna. "
+                         "Si es un micrófono virtual (Voicemod, Steam, NVIDIA Broadcast), abre su app o "
+                         "elige tu micrófono físico en Ajustes; si no, revisa que no esté silenciado.")
+                log_guardia(f"🔇 {aviso}")
+                if self.loop: self.loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, f"⚠️ {aviso}")
 
     async def _send_realtime(self, session):
         try:
