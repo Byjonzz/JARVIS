@@ -12,8 +12,11 @@ import numpy as np
 from scipy.spatial import cKDTree
 from PIL import Image, ImageDraw
 
-RUTA_SALIDA = r"C:\Users\bravo\OneDrive\Escritorio\JARVIS\Mi-JARVIS\assets\cara_datos.js"
-RUTA_PREVIEW = r"C:\Users\bravo\AppData\Local\Temp\claude\C--Users-bravo-OneDrive-Escritorio-JARVIS-Mi-JARVIS\21ec4ca1-d1a3-400f-a578-30a643951273\scratchpad"
+# Rutas relativas a la raíz del proyecto (ejecutar desde ahí):
+#   .venv\Scripts\python.exe esculpir_cara.py            → hornea assets/cara_datos.js
+#   .venv\Scripts\python.exe esculpir_cara.py --preview  → solo genera los PNG de vista previa
+RUTA_SALIDA = "assets/cara_datos.js"
+RUTA_PREVIEW = "."
 
 rng = np.random.default_rng(7)
 
