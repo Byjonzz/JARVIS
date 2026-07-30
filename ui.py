@@ -195,8 +195,13 @@ class JarvisUI:
         self._win.showFullScreen()
         
     def set_state(self, state_text):
-        if "EN LÍNEA" in state_text:
+        if ("ESCUCHANDO" in state_text or "EN LÍNEA" in state_text
+                or "VENTANA" in state_text or "GRABANDO" in state_text):
             self._win.orb.set_state("LISTENING")
+        elif "HABLANDO" in state_text:
+            self._win.orb.set_state("SPEAKING")
+        else:
+            self._win.orb.set_state("IDLE")
             
     def write_log(self, text):
         js_code = f"if (window.updateConsole) window.updateConsole({json.dumps(text)});"

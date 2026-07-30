@@ -11,3 +11,18 @@ __pycache__/
 guardia_log.txt
 
 .config/
+
+# Tokens de sesión de Spotify (¡secretos!)
+.spotify_cache
+.cache
+
+# Datos de la red neuronal de aprendizaje (se generan con el uso)
+config/neural_dataset.jsonl
+config/neural_pesos.npz
+config/neural_meta.json
+
+# Huella biométrica de voz del usuario (dato personal)
+config/voice_profile.npz
+
+# Captura temporal del módulo de visión
+temp_vision.png

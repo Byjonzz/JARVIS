@@ -7,10 +7,16 @@ def windows_settings(parameters: dict) -> str:
 
     try:
         if action == "brightness":
+            valor = str(value).strip().replace("%", "")
+            if not valor.isdigit() or not (0 <= int(valor) <= 100):
+                return "Error: el brillo debe ser un número entre 0 y 100."
             # Inyecta un comando a la BIOS/WMI para cambiar el brillo
-            cmd = f'powershell (Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightnessMethods).WmiSetBrightness(1,{value})'
-            subprocess.run(cmd, shell=True)
-            return f"Brillo de la pantalla ajustado al {value}%."
+            cmd = f'powershell -NoProfile "(Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightnessMethods).WmiSetBrightness(1,{int(valor)})"'
+            resultado = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=20)
+            if resultado.returncode != 0:
+                return ("No se pudo cambiar el brillo: este monitor no expone control WMI "
+                        "(suele pasar con monitores externos de escritorio).")
+            return f"Brillo de la pantalla ajustado al {valor}%."
             
         elif action == "lock_screen":
             # Llama a la librería nativa de Windows para bloquear sesión

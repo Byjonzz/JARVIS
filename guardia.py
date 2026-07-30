@@ -74,7 +74,7 @@ def vigilar():
     print("⌨️ Atajo global activado: Ctrl + Shift + J")
     sys.stdout.flush()
 
-    ALIAS_JARVIS = ["iris, ivis,"]
+    ALIAS_JARVIS = {"iris", "yris", "iriz", "yriz", "ivis", "jarvis"}
 
     while True:
         print("🛡️ Guardia en posición. Esperando voz o teclado...")
@@ -93,8 +93,9 @@ def vigilar():
                 if recognizer.AcceptWaveform(data):
                     resultado = json.loads(recognizer.Result())
                     texto = resultado.get("text", "").lower()
-                    
-                    if any(alias in texto for alias in ALIAS_JARVIS) and not jarvis_en_pantalla:
+                    palabras = set(texto.replace(",", " ").replace(".", " ").split())
+
+                    if ALIAS_JARVIS.intersection(palabras) and not jarvis_en_pantalla:
                         print(f"✨ ¡Despertar por voz detectado a las {time.strftime('%H:%M:%S')}!")
                         sys.stdout.flush()
                         despertar = True

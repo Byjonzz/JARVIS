@@ -18,6 +18,10 @@ def memory_manager(parameters: dict) -> str:
                 memory = json.load(f)
         except Exception:
             pass
+    if not isinstance(memory, dict):
+        memory = {"hechos": []}
+    if not isinstance(memory.get("hechos"), list):
+        memory["hechos"] = []
             
     if action == "save":
         if not fact: 

@@ -37,7 +37,7 @@ def clean_text(text):
 def whatsapp(parameters: dict) -> str:
     action = parameters.get("action", "").lower()
     receiver = parameters.get("receiver", "")
-    message = clean_text(parameters.get("message", ""))
+    message = parameters.get("message", "")  # El mensaje se envía tal cual (con acentos y mayúsculas)
     name = parameters.get("name", "")
     phone_param = parameters.get("phone", "")
 

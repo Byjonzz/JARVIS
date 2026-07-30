@@ -11,7 +11,7 @@ def auto_programmer(parameters: dict) -> str:
     tool_name = tool_name.replace(" ", "_").lower()
     
     prompt = f"""
-    Eres J.A.R.V.I.S., un Arquitecto de Software Senior en Python con nivel de acceso 'Modo Dios'.
+    Eres I.R.I.S., un Arquitecta de Software Senior en Python con nivel de acceso 'Modo Dios'.
     Tu objetivo es escribir el código Python para una nueva herramienta llamada '{tool_name}'.
     El usuario solicitó exactamente esto: {request}
     
@@ -27,25 +27,26 @@ def auto_programmer(parameters: dict) -> str:
     """
     
     try:
-        url = "http://localhost:11434/api/generate"
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
+            "Content-Type": "application/json"
+        }
         payload = {
-            "model": "qwen2.5-coder:7b",
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "num_ctx": 8192
-            }
+            "model": "openai/gpt-oss-120b:free", # 🟢 Aquí está tu modelo gratuito
+            "messages": [
+                {"role": "user", "content": prompt}
+            ]
         }
         
-        # 🟢 FIX 1: El Seguro de Vida (Timeout). Si en 2 minutos no acaba, aborta la misión para no congelar a JARVIS.
-        response = requests.post(url, json=payload, timeout=120)
+        response = requests.post(url, headers=headers, json=payload, timeout=120)
         response.raise_for_status() 
         
         datos = response.json()
-        texto = datos.get("response", "")
+        texto = datos["choices"][0]["message"]["content"]
         
-        # 🟢 FIX 2: Extracción Indestructible por Regex
-        bloques = re.findall(r'```python\n(.*?)\n```', texto, re.DOTALL)
+        # Extracción Indestructible por Regex (tolera ```py, ```python y saltos CRLF)
+        bloques = re.findall(r'```(?:python|py)?[ \t]*\r?\n(.*?)```', texto, re.DOTALL)
         if bloques:
             codigo = bloques[0].strip()
         elif "```" in texto:
@@ -57,19 +58,15 @@ def auto_programmer(parameters: dict) -> str:
         with open(ruta, "w", encoding="utf-8") as f:
             f.write(codigo)
             
-        return f"Éxito: Usé Ollama local para programar la herramienta '{tool_name}.py'. Dile al usuario que reinicie la interfaz para cargarla."
+        return f"Éxito: Usé el modelo OpenRouter gpt-oss-120b para programar la herramienta '{tool_name}.py'. Dile al usuario que reinicie la interfaz para cargarla."
         
-    except requests.exceptions.Timeout:
-        return "Error crítico: Ollama tardó demasiado en generar el código y cancelé la conexión para evitar congelarme."
-    except requests.exceptions.ConnectionError:
-        return "Error crítico: El servidor local de Ollama no está encendido. Ejecuta 'ollama serve'."
     except Exception as e:
-        return f"Error crítico en el auto-programador: {e}"
+        return f"Error crítico en el auto-programador conectado a OpenRouter: {e}"
 
 # 🟢 EL MANUAL AUTODESCUBRIBLE
 TOOL_DEF = {
     "name": "auto_programmer",
-    "description": "Permite a JARVIS escribir su propio código Python usando el modelo local Qwen. Úsalo cuando el usuario te pida crear una nueva herramienta o automatizar algo complejo en Windows.",
+    "description": "Permite a I.R.I.S. escribir su propio código Python usando OpenRouter. Úsalo cuando el usuario te pida crear una nueva herramienta o automatizar algo complejo en Windows.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

@@ -1,5 +1,7 @@
 import os
 import time
+from pathlib import Path
+
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 from dotenv import load_dotenv
@@ -9,6 +11,10 @@ load_dotenv()
 CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 REDIRECT_URI = "http://127.0.0.1:8888/callback"
+
+# 🟢 MISMO caché de tokens que usa la ventana de Ajustes (antes cada uno usaba el suyo
+# y la sesión iniciada en Ajustes jamás le servía a esta herramienta)
+CACHE_PATH = str(Path(__file__).resolve().parent.parent / ".spotify_cache")
 
 def spotify_control(parameters: dict) -> str:
     query = parameters.get("query", "").strip()
@@ -28,13 +34,20 @@ def spotify_control(parameters: dict) -> str:
 
         # 2. AUTENTICACIÓN
         scope = "user-modify-playback-state user-read-playback-state"
-        sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
+        auth_manager = SpotifyOAuth(
             client_id=CLIENT_ID,
             client_secret=CLIENT_SECRET,
             redirect_uri=REDIRECT_URI,
             scope=scope,
-            open_browser=False # Apagado porque ya te autorizaste antes
-        ))
+            open_browser=False, # Apagado porque ya te autorizaste antes
+            cache_path=CACHE_PATH
+        )
+        # Si no hay sesión guardada, avisamos en lugar de quedarnos congelados
+        # esperando un input de consola que nunca llegará.
+        if not auth_manager.get_cached_token():
+            return ("No hay sesión de Spotify guardada. Dile al usuario que abra Ajustes y use el botón "
+                    "'Conectar con Spotify' una sola vez para autorizar su cuenta.")
+        sp = spotipy.Spotify(auth_manager=auth_manager)
         
         # 3. BÚSQUEDA EXACTA EN LA BASE DE DATOS DE SPOTIFY
         results = sp.search(q=query, limit=1, type='track')

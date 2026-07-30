@@ -136,6 +136,40 @@ class DeviceSettingsDialog(QDialog):
         self.inp_camera_ip.setPlaceholderText("Ej: 192.168.1.50 (o http://192.168.1.50:4747/video)")
         layout.addWidget(self.inp_camera_ip)
         
+        layout.addWidget(QLabel(f"<hr style='border: 0; border-top: 1px solid {C_BORDER}; margin: 8px 0;'><h3 style='color: {C_PRI}; font-family: sans-serif; margin: 0;'>Voice Guard (Biometría de Voz)</h3>"))
+
+        self.chk_voice_lock = QCheckBox("Responder únicamente a mi voz (requiere decir 'Iris, aprende mi voz' una vez)")
+        self.chk_voice_lock.setChecked(True)
+        layout.addWidget(self.chk_voice_lock)
+
+        strict_layout = QHBoxLayout()
+        strict_layout.addWidget(QLabel("Rigidez de la verificación de voz:"))
+        self.lbl_strict_val = QLabel("50%")
+        self.lbl_strict_val.setStyleSheet(f"font-weight: bold; color: {C_PRI};")
+        strict_layout.addStretch()
+        strict_layout.addWidget(self.lbl_strict_val)
+        layout.addLayout(strict_layout)
+
+        self.sld_strict = QSlider(Qt.Orientation.Horizontal)
+        self.sld_strict.setRange(0, 100)
+        self.sld_strict.setValue(50)
+        self.sld_strict.valueChanged.connect(lambda v: self.lbl_strict_val.setText(f"{v}%"))
+        layout.addWidget(self.sld_strict)
+
+        ventana_layout = QHBoxLayout()
+        ventana_layout.addWidget(QLabel("Ventana para seguir hablando sin decir 'Iris' (0 = apagada):"))
+        self.lbl_ventana_val = QLabel("12 s")
+        self.lbl_ventana_val.setStyleSheet(f"font-weight: bold; color: {C_PRI};")
+        ventana_layout.addStretch()
+        ventana_layout.addWidget(self.lbl_ventana_val)
+        layout.addLayout(ventana_layout)
+
+        self.sld_ventana = QSlider(Qt.Orientation.Horizontal)
+        self.sld_ventana.setRange(0, 30)
+        self.sld_ventana.setValue(12)
+        self.sld_ventana.valueChanged.connect(lambda v: self.lbl_ventana_val.setText(f"{v} s"))
+        layout.addWidget(self.sld_ventana)
+
         layout.addWidget(QLabel(f"<hr style='border: 0; border-top: 1px solid {C_BORDER}; margin: 8px 0;'><h3 style='color: {C_PRI}; font-family: sans-serif; margin: 0;'>Resource & Visual Management</h3>"))
         perf_layout = QHBoxLayout()
         perf_layout.addWidget(QLabel("Visual Performance Quality (Caps RAM/GPU):"))
@@ -301,8 +335,17 @@ class DeviceSettingsDialog(QDialog):
             perf = cfg.get("performance_quality", 80)
             self.sld_performance.setValue(int(perf))
             self.lbl_performance_val.setText(f"{perf}%")
-            
+
             self.chk_gpu.setChecked(cfg.get("gpu_acceleration", False))
+
+            # 🟢 Restauramos VOICE GUARD
+            self.chk_voice_lock.setChecked(bool(cfg.get("voice_lock", True)))
+            rigidez = int(cfg.get("voice_strictness", 50))
+            self.sld_strict.setValue(rigidez)
+            self.lbl_strict_val.setText(f"{rigidez}%")
+            ventana = int(cfg.get("follow_up_window", 12))
+            self.sld_ventana.setValue(ventana)
+            self.lbl_ventana_val.setText(f"{ventana} s")
 
             # 🟢 Restauramos SPOTIFY
             spotify_id = cfg.get("spotify_client_id", "")
@@ -336,7 +379,10 @@ class DeviceSettingsDialog(QDialog):
                 "jarvis_voice": self.cmb_voice.currentData(),
                 "jarvis_theme": theme_val,
                 "gpu_acceleration": self.chk_gpu.isChecked(),
-                "mic_sensitivity": self.sld_mic_sens.value(), 
+                "voice_lock": self.chk_voice_lock.isChecked(),
+                "voice_strictness": self.sld_strict.value(),
+                "follow_up_window": self.sld_ventana.value(),
+                "mic_sensitivity": self.sld_mic_sens.value(),
                 "camera_ip": self.inp_camera_ip.text().strip(),
                 "user_name": self.inp_user_name.text().strip() or "Señor",
                 "spotify_client_id": self.inp_spotify_id.text().strip(),
@@ -360,13 +406,18 @@ class DeviceSettingsDialog(QDialog):
 
     def check_spotify_auth_status(self):
         try:
-            client_id = self.inp_spotify_id.text().strip() or "455d312ba37a4e0c8be373b53f6305a4"
-            client_secret = self.inp_spotify_secret.text().strip() or "5a075d9e504c4f3cb4cc6c5e533d1b4a"
+            client_id = self.inp_spotify_id.text().strip() or os.getenv("SPOTIFY_CLIENT_ID", "")
+            client_secret = self.inp_spotify_secret.text().strip() or os.getenv("SPOTIFY_CLIENT_SECRET", "")
             redirect_uri = self.inp_spotify_uri.text().strip() or "http://127.0.0.1:8888/callback"
-            
+
+            if not client_id or not client_secret:
+                self.lbl_spotify_status.setStyleSheet("color: #e11d48; font-style: italic;")
+                return "Faltan credenciales (revisa el .env)"
+
             import spotipy
             from spotipy.oauth2 import SpotifyOAuth
-            sp_oauth = SpotifyOAuth(client_id=client_id, client_secret=client_secret, redirect_uri=redirect_uri, open_browser=False)
+            sp_oauth = SpotifyOAuth(client_id=client_id, client_secret=client_secret, redirect_uri=redirect_uri,
+                                    open_browser=False, cache_path=str(Path(__file__).parent / ".spotify_cache"))
             token = sp_oauth.get_cached_token()
             if token:
                 self.lbl_spotify_status.setStyleSheet("color: #1DB954; font-weight: bold;")
@@ -379,15 +430,19 @@ class DeviceSettingsDialog(QDialog):
             return f"Error: {e}"
 
     def connect_spotify(self):
-        client_id = self.inp_spotify_id.text().strip() or "455d312ba37a4e0c8be373b53f6305a4"
-        client_secret = self.inp_spotify_secret.text().strip() or "5a075d9e504c4f3cb4cc6c5e533d1b4a"
-        custom_redirect_uri = self.inp_spotify_uri.text().strip() or "http://127.0.0.1:8765/callback"
+        client_id = self.inp_spotify_id.text().strip() or os.getenv("SPOTIFY_CLIENT_ID", "")
+        client_secret = self.inp_spotify_secret.text().strip() or os.getenv("SPOTIFY_CLIENT_SECRET", "")
+        custom_redirect_uri = self.inp_spotify_uri.text().strip() or "http://127.0.0.1:8888/callback"
+
+        if not client_id or not client_secret:
+            self.spotify_auth_failed("Faltan SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET (configúralos en el .env o en los campos avanzados).")
+            return
         
         try:
             parsed_uri = urllib.parse.urlparse(custom_redirect_uri)
-            port = parsed_uri.port or 8765
+            port = parsed_uri.port or 8888
         except Exception:
-            port = 8765
+            port = 8888
             
         redirect_uri = f"http://127.0.0.1:{port}/callback"
 

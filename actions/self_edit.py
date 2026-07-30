@@ -46,7 +46,6 @@ def self_edit(parameters: dict) -> str:
             except Exception as e:
                 print(f"[DEBUG] Error leyendo memoria: {e}")
 
-        # 🟢 INVERSIÓN DE PROMPT: Primero el código, al final las reglas.
         prompt = f'''
         Eres JARVIS, un Arquitecto de Software Senior.
         
@@ -73,32 +72,23 @@ def self_edit(parameters: dict) -> str:
         Empieza ahora, sin saludos.
         '''
 
-        url = "http://localhost:11434/api/generate"
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
+            "Content-Type": "application/json"
+        }
         payload = {
-            "model": "qwen2.5-coder:7b", 
-            "prompt": prompt,
-            "stream": True,
-            "options": {
-                "num_ctx": 8192,
-                "num_predict": 400, 
-                "temperature": 0.0
-            }
+            "model": "openai/gpt-oss-120b:free", # 🟢 Aquí está tu modelo gratuito
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0
         }
         
-        print(f"[DEBUG] Generando parche...")
-        response = requests.post(url, json=payload, stream=True)
+        print(f"[DEBUG] Generando parche con OpenRouter...")
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
         response.raise_for_status()
         
-        texto_completo = ""
-        for linea in response.iter_lines():
-            if linea:
-                datos = json.loads(linea)
-                fragmento = datos.get("response", "")
-                texto_completo += fragmento
-                
-                if "[FIN]" in texto_completo:
-                    response.close()
-                    break
+        datos = response.json()
+        texto_completo = datos["choices"][0]["message"]["content"]
                     
         print(f"\n[DEBUG] --- TEXTO CRUDO GENERADO POR LA IA ---")
         print(texto_completo.strip())
@@ -107,7 +97,7 @@ def self_edit(parameters: dict) -> str:
         codigo_nuevo = codigo_original
         cambios_aplicados = 0
 
-        # 🟢 PLAN A: Formato Correcto
+        # PLAN A: Formato Correcto
         if "[BUSCAR]" in texto_completo and "[REEMPLAZAR]" in texto_completo:
             buscar = texto_completo.split("[BUSCAR]")[1].split("[REEMPLAZAR]")[0].strip("\n").replace("```python", "").replace("```", "")
             reemplazar = texto_completo.split("[REEMPLAZAR]")[1].split("[FIN]")[0].strip("\n").replace("```python", "").replace("```", "")
@@ -117,8 +107,8 @@ def self_edit(parameters: dict) -> str:
                 cambios_aplicados += 1
                 print("[DEBUG] Reemplazo exacto exitoso.")
             else:
-                # 🟢 PLAN B: Fallo de memoria, inyección forzada
-                print("[DEBUG] Activando Parche Inteligente (Regex) para formato [REEMPLAZAR]...")
+                # PLAN B: Parche Regex
+                print("[DEBUG] Activando Parche Inteligente (Regex)...")
                 reemplazar_lines = [l for l in reemplazar.split('\n') if l.strip()]
                 for linea_nueva in reemplazar_lines:
                     if "=" in linea_nueva:
@@ -130,42 +120,38 @@ def self_edit(parameters: dict) -> str:
                             cambios_aplicados += 1
                             print(f"[DEBUG] Variable '{var_name}' parcheada.")
 
-        # 🟢 PLAN C (LA NOVEDAD): La IA ignoró el formato por completo y solo escupió código
+        # PLAN C: Extractor Crudo
         else:
-            print("[DEBUG] La IA ignoró el formato. Activando Plan C (Extractor Crudo)...")
-            # Extraemos todo lo que parezca código Python
-            bloques_codigo = re.findall(r'```python\n(.*?)\n```', texto_completo, re.DOTALL)
+            print("[DEBUG] Plan C (Extractor Crudo)...")
+            bloques_codigo = re.findall(r'```(?:python|py)?[ \t]*\r?\n(.*?)```', texto_completo, re.DOTALL)
             texto_a_procesar = bloques_codigo[0] if bloques_codigo else texto_completo
             
             reemplazar_lines = [l for l in texto_a_procesar.split('\n') if l.strip()]
             for linea_nueva in reemplazar_lines:
-                if "=" in linea_nueva and "==" not in linea_nueva: # Aseguramos que sea una asignación de variable
+                if "=" in linea_nueva and "==" not in linea_nueva:
                     var_name = linea_nueva.split("=")[0].strip()
                     patron = r'^' + re.escape(var_name) + r'\s*=.*$'
                     codigo_nuevo_temp, num_subs = re.subn(patron, linea_nueva, codigo_nuevo, flags=re.MULTILINE)
                     if num_subs > 0:
                         codigo_nuevo = codigo_nuevo_temp
                         cambios_aplicados += 1
-                        print(f"[DEBUG] [Plan C] Variable '{var_name}' inyectada a la fuerza.")
+                        print(f"[DEBUG] [Plan C] Variable '{var_name}' inyectada.")
 
-        # 🟢 EJECUCIÓN FINAL
         if cambios_aplicados > 0:
             with open(ruta_encontrada, "w", encoding="utf-8") as f:
                 f.write(codigo_nuevo)
             threading.Thread(target=ejecutar_reinicio, args=(nombre_archivo,), daemon=True).start()
             return f"Archivo {nombre_archivo} modificado quirúrgicamente. Reiniciando núcleo..."
         else:
-            return "Error: La IA alucinó variables que no existen en el código original."
+            return "Error: La IA no pudo aplicar los cambios al archivo."
 
-    except requests.exceptions.ConnectionError:
-        return "Error: Ollama no está encendido."
     except Exception as e:
         traceback.print_exc()
-        return f"Error crítico: {e}"
+        return f"Error crítico con OpenRouter: {e}"
 
 TOOL_DEF = {
     "name": "self_edit",
-    "description": "Herramienta CRÍTICA. Modifica los archivos internos de JARVIS (como ui.py). Úsalo OBLIGATORIAMENTE y sin dudarlo cuando el usuario te pida cambiar el color de la interfaz gráfica o editar código.",
+    "description": "Herramienta CRÍTICA. Modifica los archivos internos de JARVIS. Úsalo OBLIGATORIAMENTE y sin dudarlo cuando el usuario te pida cambiar el color de la interfaz gráfica o editar código.",
     "parameters": {
         "type": "OBJECT",
         "properties": {

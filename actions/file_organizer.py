@@ -11,28 +11,37 @@ def get_file_checksum(filepath):
 
 
 def file_organizer(args):
-    folder_path = args.get("folder_path")
-    action = args.get("action")
+    folder_path = args.get("folder_path", "")
+    action = args.get("action", "")
 
-    if not os.path.exists(folder_path):
-        return f"La ruta {folder_path} no existe."
+    if not folder_path or not os.path.exists(folder_path):
+        return f"La ruta '{folder_path}' no existe o no fue especificada."
 
     if action == "find_duplicates":
         hashes = {}
         duplicados = []
+        errores = 0
         # Escaneamos la carpeta
         for root, dirs, files in os.walk(folder_path):
             for filename in files:
                 filepath = os.path.join(root, filename)
-                file_hash = get_file_checksum(filepath)
+                try:
+                    file_hash = get_file_checksum(filepath)
 
-                if file_hash in hashes:
-                    duplicados.append(filepath)
-                    os.remove(filepath)  # ⚠️ Borra el duplicado directamente
-                else:
-                    hashes[file_hash] = filepath
+                    if file_hash in hashes:
+                        os.remove(filepath)  # ⚠️ Borra el duplicado directamente
+                        duplicados.append(filepath)
+                    else:
+                        hashes[file_hash] = filepath
+                except Exception:
+                    errores += 1  # Archivo bloqueado o sin permisos: lo saltamos
 
-        return f"Escaneo completado. Se eliminaron {len(duplicados)} archivos duplicados para liberar espacio."
+        reporte = f"Escaneo completado. Se eliminaron {len(duplicados)} archivos duplicados para liberar espacio."
+        if errores:
+            reporte += f" ({errores} archivos no se pudieron leer y fueron ignorados)."
+        return reporte
+
+    return f"Acción '{action}' no reconocida. Usa 'find_duplicates'."
 
 
 TOOL_DEF = {

@@ -17,11 +17,15 @@ def os_control(args):
             return f"Volumen maestro ajustado al {int(level * 100)}%"
 
         elif action == "minimize_all":
-            windows = gw.getAllWindows()
-            for win in windows:
-                if win.title and win.isActive:
-                    win.minimize()
-            return "Todas las ventanas han sido minimizadas."
+            minimizadas = 0
+            for win in gw.getAllWindows():
+                try:
+                    if win.title.strip() and win.visible and not win.isMinimized:
+                        win.minimize()
+                        minimizadas += 1
+                except Exception:
+                    continue  # Algunas ventanas del sistema no permiten minimizarse
+            return f"Listo: {minimizadas} ventanas minimizadas."
 
         return "Acción de sistema no reconocida."
     except Exception as e:
