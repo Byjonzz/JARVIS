@@ -669,6 +669,12 @@ class IRISCore:
                     it = getattr(sc, 'input_transcription', None)
                     if it and it.text:
                         self.texto_usuario += it.text
+                        # 💬 Tu transcripción en vivo, para las burbujas del diálogo
+                        try:
+                            t = self.texto_usuario.strip()
+                            if t and hasattr(self.ui.puente, 'senal_usuario'):
+                                self.ui.puente.senal_usuario.emit(t if len(t) < 90 else "..." + t[-85:])
+                        except Exception: pass
                         # 🎙️ Red de seguridad: si pides grabar tu voz, lo agendamos
                         # nosotros mismos aunque el modelo olvide llamar la herramienta.
                         if not voice_guard.enroll_pendiente() and voice_guard.frase_pide_enrolamiento(self.texto_usuario):
@@ -989,6 +995,7 @@ class IRISCore:
         if stream is not None:
             with stream:
                 stream.start()
+                ultimo_nivel_voz = 0.0
                 while True:
                     chunk = await self.audio_in_queue.get()
 
@@ -996,6 +1003,18 @@ class IRISCore:
                     if self.estado not in ("HABLANDO", "ENROLANDO"):
                         self.estado = "HABLANDO"
                         self.actualizar_ui()
+
+                    # 🎤→✨ Nivel real de la voz de I.R.I.S. para la animación del HUD
+                    # (throttle a ~20/s; el cálculo es un rms barato por trozo)
+                    try:
+                        ahora = time.monotonic()
+                        if ahora - ultimo_nivel_voz > 0.05 and hasattr(self.ui.puente, 'senal_voz'):
+                            muestras = np.frombuffer(chunk, dtype=np.int16)
+                            if muestras.size:
+                                rms_voz = float(np.sqrt(np.mean(muestras.astype(np.float64) ** 2)))
+                                self.ui.puente.senal_voz.emit(min(1.0, rms_voz / 32768.0 * 6.0))
+                            ultimo_nivel_voz = ahora
+                    except Exception: pass
 
                     await asyncio.to_thread(stream.write, chunk)
 
@@ -1013,6 +1032,11 @@ class IRISCore:
                                     break
                                 await asyncio.sleep(0.1)
                             if self.audio_in_queue.empty() and self.estado != "ENROLANDO":
+                                # La voz calló: la animación de habla vuelve a reposo
+                                try:
+                                    if hasattr(self.ui.puente, 'senal_voz'):
+                                        self.ui.puente.senal_voz.emit(0.0)
+                                except Exception: pass
                                 # FÍSICAMENTE la bocina ha dejado de emitir sonido.
                                 # Este es el momento EXACTO para evaluar la frase completa.
                                 self.evaluar_texto_y_estado(tras_audio=True)

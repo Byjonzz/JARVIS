@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>I.R.I.S. HUD</title>
+<style>
+  :root{
+    --pri:#ffffff; --pri-dim:#cccccc; --text:#ffffff; --border:rgba(255,255,255,.45);
+    --amber:#ffb020; --rec:#ff3355; --ok:#37e8a3;
+    --panel:rgba(10,14,18,.55); --panel-line:rgba(255,255,255,.09);
+  }
+  *{margin:0;padding:0;box-sizing:border-box;user-select:none}
+  html,body{width:100%;height:100%;overflow:hidden;background:#000;color:var(--text);
+    font-family:'Bahnschrift','Segoe UI',sans-serif;cursor:default}
+  #fx{position:fixed;inset:0;z-index:1}
+  /* fondo: gradiente profundo + rejilla sutil + viñeta */
+  #bg{position:fixed;inset:0;z-index:0;
+    background:radial-gradient(ellipse 80% 60% at 50% 42%, #0a0f14 0%, #05070a 55%, #000 100%)}
+  #grid{position:fixed;inset:0;z-index:0;opacity:.35;pointer-events:none;
+    background-image:linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px),
+                     linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px);
+    background-size:44px 44px;
+    mask-image:radial-gradient(ellipse 75% 65% at 50% 45%, #000 30%, transparent 78%)}
+  #vig{position:fixed;inset:0;z-index:2;pointer-events:none;
+    background:radial-gradient(ellipse 90% 80% at 50% 50%, transparent 55%, rgba(0,0,0,.55) 100%)}
+
+  /* ───────── paneles ───────── */
+  .panel{position:relative;background:var(--panel);border:1px solid var(--panel-line);
+    backdrop-filter:blur(9px);padding:1.0vh 1.0vw;margin-bottom:1.4vh;
+    clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px));
+    animation:pin .6s cubic-bezier(.2,.9,.3,1) both}
+  .panel::before{content:"";position:absolute;left:0;top:0;width:26%;height:2px;
+    background:linear-gradient(90deg,var(--pri),transparent);opacity:.9}
+  @keyframes pin{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  .ptitle{font-size:1.25vh;letter-spacing:.34em;color:var(--pri);opacity:.92;
+    text-transform:uppercase;margin-bottom:.9vh;display:flex;align-items:center;gap:.5vw}
+  .ptitle::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
+
+  aside{position:fixed;top:8.5vh;bottom:6.5vh;z-index:3;width:19.5vw;display:flex;flex-direction:column}
+  #left{left:1.6vw} #right{right:1.6vw}
+  #left .panel:nth-child(2){animation-delay:.08s} #left .panel:nth-child(3){animation-delay:.16s}
+  #left .panel:nth-child(4){animation-delay:.24s} #left .panel:nth-child(5){animation-delay:.32s}
+  #right .panel:nth-child(2){animation-delay:.12s} #right .panel:nth-child(3){animation-delay:.22s}
+
+  /* ───────── cabecera ───────── */
+  header{position:fixed;top:0;left:0;right:0;height:6.4vh;z-index:4;display:flex;
+    align-items:center;padding:0 1.6vw;
+    background:linear-gradient(180deg,rgba(5,8,10,.85),transparent)}
+  #logo{font-size:2.5vh;letter-spacing:.5em;font-weight:600;color:var(--pri);
+    text-shadow:0 0 18px var(--border)}
+  #estado-chip{margin-left:2vw;font-size:1.35vh;letter-spacing:.22em;padding:.55vh 1vw;
+    border:1px solid var(--border);color:var(--pri);display:flex;align-items:center;gap:.6vw;
+    clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
+  #estado-dot{width:.9vh;height:.9vh;border-radius:50%;background:var(--pri);
+    box-shadow:0 0 8px var(--pri);animation:blink 2s ease-in-out infinite}
+  @keyframes blink{50%{opacity:.35}}
+  #botones{margin-left:auto;display:flex;gap:.7vw}
+  .btn{width:3.4vh;height:3.4vh;border:1px solid var(--border);display:flex;align-items:center;
+    justify-content:center;font-size:1.6vh;color:var(--pri);cursor:pointer;transition:.18s;
+    background:rgba(255,255,255,.03)}
+  .btn:hover{background:var(--pri);color:#000;box-shadow:0 0 16px var(--border)}
+
+  /* ───────── widgets ───────── */
+  .metric{margin-bottom:1vh}
+  .mlabel{display:flex;justify-content:space-between;font-size:1.3vh;letter-spacing:.12em;
+    opacity:.85;margin-bottom:.4vh;font-family:Consolas,monospace}
+  .mbar{height:.75vh;background:rgba(255,255,255,.06);position:relative;overflow:hidden}
+  .mfill{height:100%;width:0%;background:linear-gradient(90deg,var(--pri-dim),var(--pri));
+    box-shadow:0 0 10px var(--border);transition:width .6s cubic-bezier(.3,1,.4,1)}
+  .mbar::after{content:"";position:absolute;inset:0;
+    background:repeating-linear-gradient(90deg,transparent 0 9px,rgba(0,0,0,.4) 9px 10px)}
+
+  .kv{display:flex;justify-content:space-between;font-size:1.35vh;padding:.32vh 0;
+    font-family:Consolas,monospace;opacity:.9}
+  .kv b{color:var(--pri);font-weight:600}
+
+  /* reloj */
+  #reloj{font-size:3.7vh;letter-spacing:.08em;color:var(--pri);font-family:Consolas,monospace;
+    text-shadow:0 0 22px var(--border);line-height:1.1;white-space:nowrap}
+  #fecha{font-size:1.35vh;letter-spacing:.3em;opacity:.75;margin-top:.4vh}
+
+  /* diálogo */
+  #chat{flex:1;min-height:0;display:flex;flex-direction:column}
+  #chat-lineas{flex:1;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;gap:.8vh}
+  .burbuja{font-size:1.5vh;line-height:1.45;padding:.8vh 1vw;max-width:100%;
+    border-left:2px solid var(--pri);background:rgba(255,255,255,.04);
+    animation:pin .4s both;word-wrap:break-word}
+  .burbuja .quien{font-size:1.05vh;letter-spacing:.28em;color:var(--pri);opacity:.8;display:block;margin-bottom:.3vh}
+
+  /* consola */
+  #consola{height:17vh;display:flex;flex-direction:column}
+  #log-lineas{flex:1;overflow:hidden;display:flex;flex-direction:column;
+    justify-content:flex-end;font-family:Consolas,monospace;font-size:1.25vh;line-height:1.55}
+  .logl{opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:pin .3s both}
+  .logl::before{content:"▸ ";color:var(--pri)}
+
+  /* volumen */
+  #vol-zona{display:flex;align-items:center;gap:.8vw}
+  #vol-slider{flex:1;-webkit-appearance:none;height:.6vh;background:rgba(255,255,255,.08);outline:none}
+  #vol-slider::-webkit-slider-thumb{-webkit-appearance:none;width:1.6vh;height:1.6vh;
+    background:var(--pri);cursor:pointer;box-shadow:0 0 10px var(--border);
+    clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%)}
+  #vol-num{font-family:Consolas,monospace;font-size:1.5vh;color:var(--pri);min-width:3.2ch;text-align:right}
+
+  /* temas */
+  #temas{display:flex;gap:.8vw;justify-content:space-between}
+  .tema{width:2.4vh;height:2.4vh;border-radius:50%;cursor:pointer;border:2px solid transparent;
+    transition:.2s;box-shadow:0 0 8px rgba(0,0,0,.6) inset}
+  .tema:hover{transform:scale(1.25)} .tema.activo{border-color:#fff;box-shadow:0 0 10px var(--border)}
+
+  /* pie */
+  footer{position:fixed;bottom:0;left:0;right:0;height:5vh;z-index:4;display:flex;align-items:center;
+    padding:0 1.8vw;font-family:Consolas,monospace;font-size:1.2vh;letter-spacing:.14em;opacity:.75;
+    background:linear-gradient(0deg,rgba(5,8,10,.85),transparent)}
+  footer .sep{margin:0 1vw;opacity:.4}
+  #pie-der{margin-left:auto;display:flex;align-items:center;gap:.5vw}
+  #mic-med{display:inline-flex;gap:2px;align-items:flex-end;height:1.6vh}
+  #mic-med i{width:3px;background:var(--pri);height:15%;transition:height .12s}
+
+  /* subtítulo bajo el orbe */
+  #subtitulo{position:fixed;left:50%;bottom:9vh;transform:translateX(-50%);z-index:3;
+    max-width:46vw;text-align:center;font-size:1.9vh;line-height:1.5;letter-spacing:.03em;
+    color:var(--text);text-shadow:0 2px 12px #000,0 0 24px rgba(0,0,0,.9);opacity:0;transition:opacity .4s}
+  #subtitulo.visible{opacity:.96}
+</style>
+</head>
+<body>
+<div id="bg"></div><div id="grid"></div>
+<canvas id="fx"></canvas>
+<div id="vig"></div>
+
+<header>
+  <div id="logo">I.R.I.S.</div>
+  <div id="estado-chip"><span id="estado-dot"></span><span id="estado-txt">INICIANDO</span></div>
+  <div id="botones">
+    <div class="btn" id="b-min" title="Minimizar">─</div>
+    <div class="btn" id="b-set" title="Ajustes">⚙</div>
+    <div class="btn" id="b-close" title="Cerrar">✕</div>
+  </div>
+</header>
+
+<aside id="left">
+  <div class="panel">
+    <div class="ptitle">Sistema</div>
+    <div class="metric"><div class="mlabel"><span>CPU</span><span id="cpu-v">--%</span></div>
+      <div class="mbar"><div class="mfill" id="cpu-b"></div></div></div>
+    <div class="metric"><div class="mlabel"><span>MEMORIA</span><span id="ram-v">--%</span></div>
+      <div class="mbar"><div class="mfill" id="ram-b"></div></div></div>
+    <div class="kv"><span>EN USO</span><b id="ram-gb">-- GB</b></div>
+  </div>
+  <div class="panel">
+    <div class="ptitle">Cerebro</div>
+    <div class="kv"><span>HERRAMIENTAS</span><b id="n-tools">--</b></div>
+    <div class="kv"><span>ÓRDENES APRENDIDAS</span><b id="n-ej">--</b></div>
+    <div class="kv"><span>PRECISIÓN</span><b id="n-prec">--%</b></div>
+    <div class="metric" style="margin-top:.5vh"><div class="mbar"><div class="mfill" id="n-prec-b"></div></div></div>
+  </div>
+  <div class="panel">
+    <div class="ptitle">Guardián de voz</div>
+    <div class="kv"><span>ESTADO</span><b id="g-estado">--</b></div>
+    <div class="kv"><span>HUELLA</span><b id="g-huella">--</b></div>
+    <div class="kv"><span>RIGIDEZ</span><b id="g-rig">--</b></div>
+  </div>
+  <div class="panel">
+    <div class="ptitle">Audio</div>
+    <div class="kv" style="margin-bottom:.5vh"><span>VOLUMEN</span></div>
+    <div id="vol-zona">
+      <input type="range" id="vol-slider" min="0" max="100" value="50">
+      <span id="vol-num">--</span>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="ptitle">Tema</div>
+    <div id="temas"></div>
+  </div>
+</aside>
+
+<aside id="right">
+  <div class="panel">
+    <div class="ptitle">Hora local</div>
+    <div id="reloj">--:--:--</div>
+    <div id="fecha">CARGANDO</div>
+  </div>
+  <div class="panel" id="chat">
+    <div class="ptitle">Diálogo</div>
+    <div id="chat-lineas"></div>
+  </div>
+  <div class="panel" id="consola">
+    <div class="ptitle">Consola</div>
+    <div id="log-lineas"></div>
+  </div>
+</aside>
+
+<div id="subtitulo"></div>
+
+<footer>
+  <span id="f-mic">MIC: --</span><span class="sep">│</span>
+  <span id="f-spk">OUT: --</span><span class="sep">│</span>
+  <span>NÚCLEO GEMINI LIVE</span>
+  <div id="pie-der">
+    <span id="mic-med"><i></i><i></i><i></i><i></i><i></i></span>
+    <span id="f-ver">I.R.I.S. v2</span>
+  </div>
+</footer>
+
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script>
+"use strict";
+/* ══════════════ Estado global ══════════════ */
+const S = {
+  pri:[255,255,255], priDim:[204,204,204],
+  estado:"IDLE",              // IDLE | LISTENING | SPEAKING | WINDOW | ENROLLING
+  mic:0, micSuave:0,          // nivel del micrófono (usuario)
+  voz:0, vozSuave:0,          // nivel de la VOZ de I.R.I.S. (mientras habla)
+  calidad:0.85,               // escala de partículas (performance_quality/100)
+  bridge:null,
+};
+const hex2rgb = h => { const n=parseInt(h.slice(1),16); return [(n>>16)&255,(n>>8)&255,n&255]; };
+const css = document.documentElement.style;
+
+/* ══════════════ API que llama Python ══════════════ */
+window.setThemeColors = c => {
+  css.setProperty("--pri", c.PRI); css.setProperty("--pri-dim", c.PRI_DIM);
+  css.setProperty("--text", c.TEXT); css.setProperty("--border", c.BORDER);
+  S.pri = hex2rgb(c.PRI); S.priDim = hex2rgb(c.PRI_DIM);
+  document.querySelectorAll(".tema").forEach(el =>
+    el.classList.toggle("activo", el.dataset.hex === c.PRI.toLowerCase()));
+};
+window.updateVolume = v => { S.mic = Math.min(1, v * 3.2); };
+window.updateVoice  = v => { S.voz = Math.min(1, v); };
+window.updateState  = st => {
+  S.estado = st;
+  const chip = document.getElementById("estado-txt");
+  const nombres = {IDLE:"EN GUARDIA", LISTENING:"ESCUCHANDO", SPEAKING:"HABLANDO",
+                   WINDOW:"VENTANA DE VOZ", ENROLLING:"GRABANDO HUELLA"};
+  chip.textContent = nombres[st] || st;
+};
+window.updateStatusText = t => { document.getElementById("estado-txt").textContent = t; };
+window.updateClock = (t, d) => {
+  document.getElementById("reloj").textContent = t;
+  document.getElementById("fecha").textContent = d;
+};
+window.updateConsole = txt => {
+  const cont = document.getElementById("log-lineas");
+  const el = document.createElement("div");
+  el.className = "logl"; el.textContent = txt;
+  cont.appendChild(el);
+  while (cont.children.length > 9) cont.removeChild(cont.firstChild);
+};
+let _ultimaBurbuja = null, _ultimaBurbujaTs = 0;
+window.updateChat = (quien, txt) => {
+  if (!txt) return;
+  const cont = document.getElementById("chat-lineas");
+  const ahora = performance.now();
+  // Las transcripciones llegan creciendo por trozos: se actualiza la misma
+  // burbuja si es la misma locución (menos de 3 s entre trozos).
+  if (_ultimaBurbuja && _ultimaBurbuja.dataset.quien === quien && ahora - _ultimaBurbujaTs < 3000) {
+    _ultimaBurbuja.querySelector(".texto").textContent = txt;
+  } else {
+    const b = document.createElement("div");
+    b.className = "burbuja"; b.dataset.quien = quien;
+    b.innerHTML = `<span class="quien">${quien === "user" ? "TÚ" : "I.R.I.S."}</span><span class="texto"></span>`;
+    b.querySelector(".texto").textContent = txt;
+    cont.appendChild(b);
+    while (cont.children.length > 4) cont.removeChild(cont.firstChild);
+    _ultimaBurbuja = b;
+  }
+  _ultimaBurbujaTs = ahora;
+  // subtítulo bajo el orbe mientras I.R.I.S. habla
+  if (quien === "iris") {
+    const sub = document.getElementById("subtitulo");
+    sub.textContent = txt; sub.classList.add("visible");
+    clearTimeout(sub._t); sub._t = setTimeout(() => sub.classList.remove("visible"), 4200);
+  }
+};
+window.updateStats = j => {
+  const d = typeof j === "string" ? JSON.parse(j) : j;
+  const pon = (id, v) => { const e = document.getElementById(id); if (e && v !== undefined) e.textContent = v; };
+  if (d.cpu !== undefined) { pon("cpu-v", d.cpu.toFixed(0) + "%");
+    document.getElementById("cpu-b").style.width = d.cpu + "%"; }
+  if (d.ram !== undefined) { pon("ram-v", d.ram.toFixed(0) + "%");
+    document.getElementById("ram-b").style.width = d.ram + "%"; }
+  pon("ram-gb", d.ram_gb); pon("n-tools", d.tools); pon("n-ej", d.ejemplos);
+  if (d.precision !== undefined) { pon("n-prec", d.precision + "%");
+    document.getElementById("n-prec-b").style.width = d.precision + "%"; }
+  pon("g-estado", d.guard_estado); pon("g-huella", d.guard_huella); pon("g-rig", d.guard_rig);
+  pon("f-mic", "MIC: " + (d.mic || "--")); pon("f-spk", "OUT: " + (d.spk || "--"));
+  if (d.volumen !== undefined) {
+    const sl = document.getElementById("vol-slider");
+    if (!sl._arrastrando) { sl.value = d.volumen; document.getElementById("vol-num").textContent = d.volumen; }
+  }
+  if (d.calidad !== undefined) S.calidad = Math.max(.3, Math.min(1.2, d.calidad / 100));
+};
+
+/* ══════════════ Puente hacia Python ══════════════ */
+try {
+  new QWebChannel(qt.webChannelTransport, ch => {
+    S.bridge = ch.objects.pyBridge;
+    if (S.bridge && S.bridge.request_theme) S.bridge.request_theme();
+  });
+} catch (e) {
+  // Sin Qt (previsualización en navegador) o canal caído: el HUD sigue vivo,
+  // solo quedan inertes los controles que hablan con Python.
+  console.warn("QWebChannel no disponible:", e);
+}
+document.getElementById("b-min").onclick   = () => S.bridge && S.bridge.minimize_app();
+document.getElementById("b-set").onclick   = () => S.bridge && S.bridge.open_settings();
+document.getElementById("b-close").onclick = () => S.bridge && S.bridge.close_app();
+
+const sl = document.getElementById("vol-slider");
+sl.addEventListener("input", () => {
+  sl._arrastrando = true;
+  document.getElementById("vol-num").textContent = sl.value;
+});
+sl.addEventListener("change", () => {
+  sl._arrastrando = false;
+  if (S.bridge && S.bridge.set_system_volume) S.bridge.set_system_volume(parseInt(sl.value));
+});
+
+/* selector de temas (funcional: persiste en jarvis_config.json) */
+const TEMAS = {green:"#00ff00", cyan:"#00ffff", red:"#ff0000", purple:"#9d00ff", gold:"#f59e0b", white:"#ffffff"};
+const zonaTemas = document.getElementById("temas");
+for (const [nombre, hex] of Object.entries(TEMAS)) {
+  const el = document.createElement("div");
+  el.className = "tema"; el.style.background = hex; el.dataset.hex = hex; el.title = nombre;
+  el.onclick = () => S.bridge && S.bridge.set_theme(nombre);
+  zonaTemas.appendChild(el);
+}
+
+/* ══════════════ El núcleo: canvas reactivo ══════════════ */
+const cv = document.getElementById("fx"), cx = cv.getContext("2d");
+let W = 0, H = 0, CX = 0, CY = 0, R = 0;
+function medir() {
+  W = cv.width = innerWidth * devicePixelRatio;
+  H = cv.height = innerHeight * devicePixelRatio;
+  cv.style.width = innerWidth + "px"; cv.style.height = innerHeight + "px";
+  CX = W / 2; CY = H * 0.44; R = Math.min(W, H) * 0.155;
+}
+addEventListener("resize", medir); medir();
+
+/* partículas orbitales */
+const parts = [];
+function crearParticulas() {
+  parts.length = 0;
+  const n = Math.round(240 * S.calidad);
+  for (let i = 0; i < n; i++) parts.push({
+    a: Math.random() * Math.PI * 2,             // ángulo
+    r: 0.72 + Math.random() * 0.56,             // radio relativo al anillo
+    v: (0.0016 + Math.random() * 0.0042) * (Math.random() < 0.5 ? 1 : -1),
+    s: 0.7 + Math.random() * 1.9,               // tamaño
+    f: Math.random() * Math.PI * 2,             // fase propia
+  });
+}
+crearParticulas();
+setInterval(() => { const n = Math.round(240 * S.calidad); if (Math.abs(n - parts.length) > 20) crearParticulas(); }, 3000);
+
+/* barras del espectro (impulsadas por el nivel real, con ruido por barra) */
+const NB = 108, barras = new Float32Array(NB), objetivo = new Float32Array(NB);
+function ruido(i, t) {
+  return 0.5 + 0.5 * Math.sin(i * 12.9898 + t * 2.3) * Math.sin(i * 4.1414 - t * 3.1);
+}
+
+const COLORES_ESTADO = {
+  WINDOW:   [255, 176, 32],
+  ENROLLING:[255, 51, 85],
+};
+let tPrev = performance.now();
+
+function marco(tNow) {
+  requestAnimationFrame(marco);
+  const dt = Math.min(50, tNow - tPrev) / 16.7; tPrev = tNow;
+  const t = tNow / 1000;
+  cx.clearRect(0, 0, W, H);
+
+  /* suavizado de niveles: ataque rápido, caída elegante */
+  S.micSuave += (S.mic - S.micSuave) * (S.mic > S.micSuave ? 0.5 : 0.06) * dt;
+  S.vozSuave += (S.voz - S.vozSuave) * (S.voz > S.vozSuave ? 0.6 : 0.08) * dt;
+  S.mic *= Math.pow(0.82, dt); S.voz *= Math.pow(0.80, dt);   // decaen si no llegan datos
+
+  const habla = S.estado === "SPEAKING";
+  const col = COLORES_ESTADO[S.estado] || S.pri;
+  const energia = habla ? S.vozSuave
+                : S.estado === "IDLE" ? 0.05 + 0.03 * Math.sin(t * 1.1)
+                : Math.max(S.micSuave, 0.06 + 0.04 * Math.sin(t * 1.7));
+  const [cr, cg, cb] = col;
+
+  /* halo del núcleo */
+  const rNucleo = R * (0.5 + energia * 0.34);
+  let g = cx.createRadialGradient(CX, CY, 0, CX, CY, rNucleo * 2.6);
+  g.addColorStop(0, `rgba(${cr},${cg},${cb},${0.20 + energia * 0.35})`);
+  g.addColorStop(0.45, `rgba(${cr},${cg},${cb},${0.05 + energia * 0.10})`);
+  g.addColorStop(1, "rgba(0,0,0,0)");
+  cx.fillStyle = g;
+  cx.fillRect(CX - rNucleo * 3, CY - rNucleo * 3, rNucleo * 6, rNucleo * 6);
+
+  /* núcleo sólido */
+  g = cx.createRadialGradient(CX - rNucleo * .25, CY - rNucleo * .3, 0, CX, CY, rNucleo);
+  g.addColorStop(0, `rgba(255,255,255,${0.75 + energia * 0.25})`);
+  g.addColorStop(0.35, `rgba(${cr},${cg},${cb},${0.55 + energia * 0.3})`);
+  g.addColorStop(1, `rgba(${Math.round(cr*.25)},${Math.round(cg*.25)},${Math.round(cb*.25)},0.9)`);
+  cx.beginPath(); cx.arc(CX, CY, rNucleo, 0, 7); cx.fillStyle = g; cx.fill();
+
+  /* espectro radial: al HABLAR baila con la voz real de I.R.I.S. */
+  const base = R * 1.22;
+  const fuente = habla ? S.vozSuave : S.estado === "LISTENING" || S.estado === "ENROLLING" || S.estado === "WINDOW" ? S.micSuave : 0;
+  for (let i = 0; i < NB; i++) {
+    objetivo[i] = fuente * (0.25 + 0.75 * ruido(i, t * (habla ? 1.6 : 1.0))) + energia * 0.06;
+    barras[i] += (objetivo[i] - barras[i]) * 0.35 * dt;
+    const a = (i / NB) * Math.PI * 2 + t * (habla ? 0.10 : 0.03);
+    const h = barras[i] * R * 0.85;
+    const x1 = CX + Math.cos(a) * base,          y1 = CY + Math.sin(a) * base;
+    const x2 = CX + Math.cos(a) * (base + h),    y2 = CY + Math.sin(a) * (base + h);
+    cx.strokeStyle = `rgba(${cr},${cg},${cb},${0.16 + barras[i] * 0.75})`;
+    cx.lineWidth = Math.max(1.5, W / 900);
+    cx.beginPath(); cx.moveTo(x1, y1); cx.lineTo(x2, y2); cx.stroke();
+  }
+
+  /* anillo guía */
+  cx.strokeStyle = `rgba(${cr},${cg},${cb},0.28)`;
+  cx.lineWidth = Math.max(1, W / 1600);
+  cx.beginPath(); cx.arc(CX, CY, base, 0, 7); cx.stroke();
+
+  /* arco distintivo por estado */
+  if (S.estado === "WINDOW") {          // ventana de seguimiento: barrido ámbar
+    cx.strokeStyle = `rgba(255,176,32,0.85)`; cx.lineWidth = Math.max(2.5, W / 700);
+    const a0 = t * 1.6;
+    cx.beginPath(); cx.arc(CX, CY, base * 1.12, a0, a0 + 1.2); cx.stroke();
+  } else if (S.estado === "ENROLLING") { // grabación: doble arco rojo pulsante
+    cx.strokeStyle = `rgba(255,51,85,${0.5 + 0.4 * Math.sin(t * 6)})`;
+    cx.lineWidth = Math.max(2.5, W / 700);
+    cx.beginPath(); cx.arc(CX, CY, base * 1.12, t * 2, t * 2 + 2.2); cx.stroke();
+    cx.beginPath(); cx.arc(CX, CY, base * 1.12, t * 2 + Math.PI, t * 2 + Math.PI + 2.2); cx.stroke();
+  } else if (S.estado === "LISTENING") { // escucha: ondas que entran hacia el núcleo
+    for (let k = 0; k < 3; k++) {
+      const f = 1 - ((t * 0.5 + k / 3) % 1);
+      cx.strokeStyle = `rgba(${cr},${cg},${cb},${(1 - f) * 0.35})`;
+      cx.lineWidth = Math.max(1.5, W / 1200);
+      cx.beginPath(); cx.arc(CX, CY, base * (1 + f * 0.55), 0, 7); cx.stroke();
+    }
+  }
+
+  /* partículas orbitales */
+  for (const p of parts) {
+    p.a += p.v * dt * (1 + energia * 2.6);
+    const rr = base * p.r * (1 + Math.sin(t * 1.3 + p.f) * 0.035 + energia * 0.14);
+    const x = CX + Math.cos(p.a) * rr, y = CY + Math.sin(p.a) * rr * 0.98;
+    const al = 0.25 + 0.55 * (0.5 + 0.5 * Math.sin(t * 2 + p.f)) * (0.4 + energia);
+    cx.fillStyle = `rgba(${cr},${cg},${cb},${Math.min(0.95, al)})`;
+    cx.beginPath(); cx.arc(x, y, p.s * (W / 1900) * (1 + energia * 0.8), 0, 7); cx.fill();
+  }
+
+  /* medidor del micrófono en el pie */
+  const med = document.getElementById("mic-med").children;
+  for (let i = 0; i < med.length; i++) {
+    const v = Math.max(0.12, Math.min(1, S.micSuave * (1.3 - i * 0.12) + (habla ? 0 : 0.02)));
+    med[i].style.height = (v * 100) + "%";
+  }
+}
+requestAnimationFrame(marco);
+
+/* reloj propio de respaldo (Python lo pisa cada segundo con su zona horaria) */
+setInterval(() => {
+  if (document.getElementById("reloj").textContent === "--:--:--") {
+    const n = new Date();
+    window.updateClock(n.toLocaleTimeString("es-MX"), n.toLocaleDateString("es-MX",
+      {weekday:"long", day:"2-digit", month:"long", year:"numeric"}).toUpperCase());
+  }
+}, 1000);
+</script>
+</body>
+</html>
