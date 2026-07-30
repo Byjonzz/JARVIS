@@ -21,8 +21,9 @@ config/neural_dataset.jsonl
 config/neural_pesos.npz
 config/neural_meta.json
 
-# Huella biométrica de voz del usuario (dato personal)
+# Huella biométrica de voz del usuario (dato personal, incluida su copia de seguridad)
 config/voice_profile.npz
+config/voice_profile.npz.bak
 
 # Captura temporal del módulo de visión
 temp_vision.png

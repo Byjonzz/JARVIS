@@ -94,6 +94,16 @@ class IRISCore:
         # 🗝️ Guardián de voz / ventana de seguimiento
         self.ventana_hasta = 0.0       # momento en que expira la ventana sin wake-word
         self._ruido = None             # piso de ruido para el detector de actividad de voz
+        self._rechazos_seguidos = 0    # wake-words seguidos rechazados por la biometría
+
+        # 🎚️ "Sensibilidad del micrófono" de Ajustes: hasta ahora se guardaba en el
+        # config y NADIE la leía. Es el suelo mínimo del detector de voz, así que un
+        # micrófono flojo (como una entrada de línea) ya se puede compensar sin tocar código.
+        try:
+            sens = float(self.cfg.get("mic_sensitivity", 50))
+        except Exception:
+            sens = 50.0
+        self._vad_min = max(60.0, 500.0 - 4.0 * float(np.clip(sens, 0.0, 100.0)))
         self._habla_acum = b""         # ráfaga de voz acumulada pendiente de verificar
         self._bloques_voz = 0
         self._sil_seguidos = 0
@@ -312,12 +322,19 @@ class IRISCore:
 
                     self.audio_buffer.append(data_bytes)
 
-                    # Detector de actividad de voz (piso de ruido adaptativo)
+                    # Detector de actividad de voz (piso de ruido adaptativo).
+                    # El primer bloque de un stream recién abierto suele traer un golpe
+                    # fuerte; arrancar el piso de ruido con él lo envenenaba (medido: se
+                    # inicializaba en 1535, dejando el umbral en 5373, y NINGÚN bloque de
+                    # voz lo superaba en 10s). Por eso el arranque está acotado y el piso
+                    # nunca se queda por encima de lo que realmente entra.
                     rms = float(np.sqrt(np.mean(indata.astype(np.float64) ** 2)))
-                    if self._ruido is None: self._ruido = max(rms, 1.0)
-                    voz_activa = rms > max(self._ruido * 3.5, 250.0)
+                    if self._ruido is None: self._ruido = float(np.clip(rms, 1.0, 150.0))
+                    voz_activa = rms > max(self._ruido * 3.5, self._vad_min)
                     if not voz_activa:
                         self._ruido = 0.95 * self._ruido + 0.05 * max(rms, 1.0)
+                    elif rms < self._ruido:
+                        self._ruido = max(rms, 1.0)
 
                     with self.vosk_lock:
                         if self.recognizer.AcceptWaveform(data_bytes):
@@ -332,13 +349,30 @@ class IRISCore:
                     if self.WAKE_WORDS.intersection(palabras_detectadas):
                         if voice_guard.lock_activo():
                             # 🗝️ Solo TU voz puede despertar a I.R.I.S.
-                            recorte = b"".join(list(self.audio_buffer)[-6:])  # último ~1.5s (incluye el wake-word)
+                            # Tomamos ~2.5s (10 bloques): con 1.5s quedaba medio segundo de
+                            # voz y el embedding salía inestable, hundiendo la similitud.
+                            recorte = b"".join(list(self.audio_buffer)[-10:])
                             ok, sim, seg = voice_guard.verificar_bytes(recorte)
                             if ok is False or (ok is None and voice_guard.modo_estricto()):
-                                log_guardia(f"🔒 Wake-word con voz NO reconocida (similitud {sim:.2f}, voz {seg:.1f}s). Ignorado.")
-                                with self.vosk_lock:
-                                    self.recognizer.Reset()
+                                self._rechazos_seguidos += 1
+                                log_guardia(f"🔒 Wake-word con voz NO reconocida (similitud {sim:.2f}, "
+                                            f"voz {seg:.1f}s, rechazo {self._rechazos_seguidos}/3). Ignorado.")
+                                # 🛟 RED DE SEGURIDAD: una huella mal calibrada no puede dejar
+                                # al usuario encerrado fuera de su propio asistente. Tras tres
+                                # rechazos seguidos abrimos igual y explicamos por qué.
+                                if self._rechazos_seguidos >= 3:
+                                    self._rechazos_seguidos = 0
+                                    aviso = (f"Te he rechazado 3 veces por biometría (última similitud {sim:.2f}, "
+                                             "umbral demasiado alto). Abro el micrófono igualmente: pídeme "
+                                             "'aprende mi voz' para regrabar tu huella.")
+                                    log_guardia(f"🛟 {aviso}")
+                                    if self.loop: self.loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, f"⚠️ {aviso}")
+                                    self._abrir_microfono("wake-word (guardián omitido tras 3 rechazos)")
+                                else:
+                                    with self.vosk_lock:
+                                        self.recognizer.Reset()
                             else:
+                                self._rechazos_seguidos = 0
                                 detalle = f"voz verificada, similitud {sim:.2f}" if ok else "evidencia corta, modo flexible"
                                 self._abrir_microfono(f"wake-word ({detalle})")
                         else:

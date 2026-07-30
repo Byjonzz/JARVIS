@@ -30,6 +30,15 @@ N_MFCC = 20
 FRAME = 400   # 25 ms
 HOP = 160     # 10 ms
 
+# Duraciones (en frames de voz, 10 ms cada uno) de las huellas de referencia.
+# Guardamos varias porque en marcha se verifica un recorte de ~1.5 s que deja medio
+# segundo de voz: un embedding de 50 frames NO es comparable con uno de 200, ya que
+# las partes de desviación estándar y de deltas cambian mucho con la duración.
+# Comparar 0.5 s contra referencias de 2 s hundía la similitud (~0.68 medido) y hacía
+# que el guardián rechazara al propio usuario.
+VENTANAS = (50, 100, 200)   # 0.5 s, 1 s y 2 s de voz
+VERSION_PERFIL = 2
+
 _LOCK = threading.Lock()
 _PERFIL = None           # caché del perfil cargado de disco
 _PERFIL_LEIDO = False
@@ -141,11 +150,17 @@ def _cargar():
     try:
         if RUTA_PERFIL.exists():
             datos = np.load(RUTA_PERFIL, allow_pickle=False)
+            claves = set(datos.files)
             _PERFIL = {
                 "chunks": datos["chunks"],
                 "centroide": datos["centroide"],
                 "umbral_base": float(datos["umbral_base"]),
                 "seg_voz": float(datos["seg_voz"]),
+                # Las huellas de la versión 1 no guardaban la duración de cada muestra
+                # ni distinguían ventanas: se siguen leyendo, pero su umbral quedaba
+                # calibrado en el techo (0.90) y rechazaban al propio usuario.
+                "longitudes": datos["longitudes"] if "longitudes" in claves else None,
+                "version": int(datos["version"]) if "version" in claves else 1,
             }
     except Exception:
         _PERFIL = None
@@ -177,8 +192,69 @@ def ventana_segundos() -> float:
 
 def _umbral_efectivo(perfil):
     base = perfil["umbral_base"]
-    ajuste = (int(_AJUSTES.get("voice_strictness", 50)) - 50) / 50.0 * 0.07
-    return float(np.clip(base + ajuste, 0.50, 0.97))
+    # El margen del mando era ±0.07, demasiado estrecho: con un umbral_base mal
+    # calibrado en 0.90, ni bajando la rigidez a 0 se llegaba a aceptar al usuario
+    # (0.83 frente a una similitud real de 0.685). Ahora el mando sí puede compensar.
+    ajuste = (int(_AJUSTES.get("voice_strictness", 50)) - 50) / 50.0 * 0.15
+    return float(np.clip(base + ajuste, 0.40, 0.95))
+
+
+def _referencias_para(perfil, n_frames):
+    """Huellas de referencia con una duración parecida a la del recorte a verificar.
+
+    Devuelve (chunks, centroide). Comparar un recorte corto contra referencias de la
+    misma duración es lo que evita el falso rechazo por desajuste de longitud.
+    """
+    longs = perfil.get("longitudes")
+    chunks = perfil["chunks"]
+    if longs is None or len(longs) != len(chunks):
+        return chunks, perfil["centroide"]          # huella de la versión 1
+    objetivo = min(VENTANAS, key=lambda w: abs(w - n_frames))
+    sel = np.asarray(longs) == objetivo
+    if sel.sum() < 2:
+        return chunks, perfil["centroide"]
+    ch = chunks[sel]
+    c = ch.mean(0)
+    norma = np.linalg.norm(c)
+    return ch, (c / norma if norma > 0 else perfil["centroide"])
+
+
+def _similitud(chunks, centroide, emb):
+    """Misma fórmula en calibración y en verificación: mitad centroide, mitad mejor muestra."""
+    return 0.5 * float(centroide @ emb) + 0.5 * float(np.max(chunks @ emb))
+
+
+def _calibrar_umbral(chunks, longitudes):
+    """Umbral estimado con validación 'dejando uno fuera'.
+
+    La versión anterior lo calculaba con la similitud de las muestras contra su PROPIO
+    centroide (que las incluye), y eso siempre da ~0.96: mide la coherencia interna del
+    perfil, no lo que puntúa una muestra NUEVA. Aquí cada muestra se compara contra un
+    centroide construido SIN ella, que es exactamente la situación de una frase nueva.
+    """
+    sims = []
+    for w in np.unique(longitudes):
+        sel = np.where(longitudes == w)[0]
+        if len(sel) < 3:
+            continue
+        ch = chunks[sel]
+        for k in range(len(ch)):
+            otros = np.delete(ch, k, axis=0)
+            c = otros.mean(0)
+            norma = np.linalg.norm(c)
+            if norma == 0:
+                continue
+            sims.append(_similitud(otros, c / norma, ch[k]))
+
+    if len(sims) < 4:
+        return 0.62   # sin datos suficientes, un valor prudente y permisivo
+    sims = np.array(sims)
+    # Percentil bajo y un margen extra: preferimos aceptar al usuario casi siempre
+    # antes que dejarlo encerrado fuera de su propio asistente.
+    # El techo es 0.80 a propósito: con características tan simples (estadísticas MFCC +
+    # coseno) un umbral por encima de eso no distingue mejor, solo empieza a rechazar al
+    # dueño de la huella. Medido: un hablante distinto se queda en 0.64-0.75.
+    return float(np.clip(np.percentile(sims, 5) - 0.04, 0.45, 0.80))
 
 
 def crear_perfil(audio_bytes: bytes):
@@ -197,31 +273,42 @@ def crear_perfil(audio_bytes: bytes):
                        "Intenta de nuevo hablando más cerca del micrófono.")
 
     frames_voz = mf[voz]
-    # Trozos de 2s (200 frames) con paso de 1s → varios embeddings de referencia
+    # Muestras de referencia de VARIAS duraciones (0.5 s, 1 s y 2 s de voz), para poder
+    # comparar cada recorte contra referencias de su mismo tamaño.
     chunks = []
-    for ini in range(0, frames_voz.shape[0] - 200 + 1, 100):
-        e = _emb_de_frames(frames_voz[ini:ini + 200])
-        if e is not None:
-            chunks.append(e)
-    if len(chunks) < 4:
+    longitudes = []
+    for w in VENTANAS:
+        if frames_voz.shape[0] < w:
+            continue
+        paso = max(w // 2, 25)
+        for ini in range(0, frames_voz.shape[0] - w + 1, paso):
+            e = _emb_de_frames(frames_voz[ini:ini + w])
+            if e is not None:
+                chunks.append(e)
+                longitudes.append(w)
+
+    if len(chunks) < 6:
         return False, "No logré extraer suficientes muestras estables de tu voz. Intenta de nuevo."
 
     chunks = np.stack(chunks)
+    longitudes = np.array(longitudes, dtype=np.int32)
     centroide = chunks.mean(0)
     centroide /= np.linalg.norm(centroide)
 
-    sims = chunks @ centroide
-    umbral_base = float(np.clip(sims.mean() - 2.5 * sims.std() - 0.02, 0.55, 0.90))
+    umbral_base = _calibrar_umbral(chunks, longitudes)
 
     with _LOCK:
         RUTA_PERFIL.parent.mkdir(parents=True, exist_ok=True)
-        np.savez(RUTA_PERFIL, chunks=chunks, centroide=centroide,
-                 umbral_base=umbral_base, seg_voz=seg_voz)
-        _PERFIL = {"chunks": chunks, "centroide": centroide,
-                   "umbral_base": umbral_base, "seg_voz": seg_voz}
+        np.savez(RUTA_PERFIL, chunks=chunks, centroide=centroide, longitudes=longitudes,
+                 umbral_base=umbral_base, seg_voz=seg_voz, version=VERSION_PERFIL)
+        _PERFIL = {"chunks": chunks, "centroide": centroide, "longitudes": longitudes,
+                   "umbral_base": umbral_base, "seg_voz": seg_voz,
+                   "version": VERSION_PERFIL}
         _PERFIL_LEIDO = True
 
-    return True, (f"Perfil de voz guardado: {seg_voz:.1f}s de voz, {len(chunks)} muestras, "
+    n_cortas = int((longitudes == VENTANAS[0]).sum())
+    return True, (f"Perfil de voz guardado: {seg_voz:.1f}s de voz, {len(chunks)} muestras "
+                  f"({n_cortas} de medio segundo para reconocerte en frases cortas), "
                   f"umbral calibrado {umbral_base:.2f}. Desde ahora solo tu voz me activa.")
 
 
@@ -245,7 +332,10 @@ def verificar_bytes(audio_bytes: bytes, min_seg=0.45):
     if emb is None or seg_voz < min_seg:
         return None, 0.0, seg_voz
 
-    sim = 0.5 * float(perfil["centroide"] @ emb) + 0.5 * float(np.max(perfil["chunks"] @ emb))
+    # Comparamos contra referencias de duración parecida a la de este recorte.
+    n_frames = int(round(seg_voz * SR / HOP))
+    chunks, centroide = _referencias_para(perfil, n_frames)
+    sim = _similitud(chunks, centroide, emb)
     return (sim >= _umbral_efectivo(perfil)), sim, seg_voz
 
 
@@ -322,10 +412,16 @@ def voice_guard(parameters: dict) -> str:
         if perfil is None:
             return (f"Guardián de voz {estado_lock}, pero AÚN NO HAY huella de voz grabada "
                     "(sin huella no puedo filtrar voces). Pide 'aprende mi voz' para grabarla.")
+        aviso = ""
+        if perfil.get("version", 1) < VERSION_PERFIL:
+            aviso = (" ATENCIÓN: esta huella es de una versión antigua cuyo umbral quedó calibrado "
+                     "en el techo y rechazaba al propio usuario. Dile que pida 'aprende mi voz' "
+                     "para volver a grabarla y que el guardián funcione de verdad.")
         return (f"Guardián de voz {estado_lock}. Huella grabada con {perfil['seg_voz']:.1f}s de voz "
-                f"({len(perfil['chunks'])} muestras), umbral {perfil['umbral_base']:.2f}, "
+                f"({len(perfil['chunks'])} muestras), umbral {perfil['umbral_base']:.2f} "
+                f"(efectivo {_umbral_efectivo(perfil):.2f}), "
                 f"rigidez {_AJUSTES.get('voice_strictness', 50)}/100, ventana de seguimiento "
-                f"{ventana_segundos():.0f}s.")
+                f"{ventana_segundos():.0f}s.{aviso}")
 
     elif action == "enable":
         _AJUSTES["voice_lock"] = True

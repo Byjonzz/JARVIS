@@ -9,7 +9,7 @@
     "jarvis_theme": "purple",
     "gpu_acceleration": true,
     "voice_lock": true,
-    "voice_strictness": 11,
+    "voice_strictness": 13,
     "follow_up_window": 5,
     "mic_sensitivity": 100,
     "camera_ip": "",
