@@ -575,6 +575,7 @@ class IRISCore:
         
         asyncio.create_task(self._listen_audio())
         asyncio.create_task(self._play_audio())
+        asyncio.create_task(self._vigilar_microfono())
         
         tools = [{"function_declarations": TOOL_DECLARATIONS}] if TOOL_DECLARATIONS else None
         
