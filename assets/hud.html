@@ -27,14 +27,30 @@
   /* ───────── paneles ───────── */
   .panel{position:relative;background:var(--panel);border:1px solid var(--panel-line);
     backdrop-filter:blur(9px);padding:1.0vh 1.0vw;margin-bottom:1.4vh;
-    clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px));
-    animation:pin .6s cubic-bezier(.2,.9,.3,1) both}
+    clip-path:polygon(0 10px,10px 0,calc(100% - 22px) 0,calc(100% - 14px) 8px,100% 8px,
+      100% calc(100% - 10px),calc(100% - 10px) 100%,22px 100%,14px calc(100% - 8px),0 calc(100% - 8px));
+    animation:pin .6s cubic-bezier(.2,.9,.3,1) both;overflow:hidden}
   .panel::before{content:"";position:absolute;left:0;top:0;width:26%;height:2px;
     background:linear-gradient(90deg,var(--pri),transparent);opacity:.9}
+  /* barrido de escáner que recorre cada panel */
+  .panel::after{content:"";position:absolute;top:0;bottom:0;width:34%;left:-40%;pointer-events:none;
+    background:linear-gradient(105deg,transparent 0%,var(--border) 50%,transparent 100%);
+    opacity:.14;animation:scan 7s linear infinite}
+  .panel:nth-child(odd)::after{animation-delay:3.2s}
+  @keyframes scan{0%{left:-40%}55%{left:110%}100%{left:110%}}
   @keyframes pin{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  /* brackets de esquina */
+  .esq{position:absolute;width:10px;height:10px;border-color:var(--pri);border-style:solid;opacity:.75}
+  .esq.a{top:3px;left:3px;border-width:1px 0 0 1px}
+  .esq.b{top:3px;right:3px;border-width:1px 1px 0 0}
+  .esq.c{bottom:3px;left:3px;border-width:0 0 1px 1px}
+  .esq.d{bottom:3px;right:3px;border-width:0 1px 1px 0}
   .ptitle{font-size:1.25vh;letter-spacing:.34em;color:var(--pri);opacity:.92;
     text-transform:uppercase;margin-bottom:.9vh;display:flex;align-items:center;gap:.5vw}
+  .ptitle .idx{font-family:Consolas,monospace;font-size:1.05vh;opacity:.55;letter-spacing:0}
   .ptitle::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
+  .ptitle::before{content:"";width:.8vh;height:.8vh;background:var(--pri);opacity:.85;
+    clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);animation:blink 3s ease-in-out infinite}
 
   aside{position:fixed;top:8.5vh;bottom:6.5vh;z-index:3;width:19.5vw;display:flex;flex-direction:column}
   #left{left:1.6vw} #right{right:1.6vw}
@@ -46,8 +62,15 @@
   header{position:fixed;top:0;left:0;right:0;height:6.4vh;z-index:4;display:flex;
     align-items:center;padding:0 1.6vw;
     background:linear-gradient(180deg,rgba(5,8,10,.85),transparent)}
+  #logo-zona{display:flex;flex-direction:column;line-height:1}
   #logo{font-size:2.5vh;letter-spacing:.5em;font-weight:600;color:var(--pri);
     text-shadow:0 0 18px var(--border)}
+  #logo-sub{font-family:Consolas,monospace;font-size:.95vh;letter-spacing:.42em;opacity:.55;
+    margin-top:.5vh;text-transform:uppercase}
+  /* tira segmentada decorativa bajo la cabecera */
+  #tira{position:fixed;top:6.4vh;left:24vw;right:24vw;height:2px;z-index:4;opacity:.5;
+    background:repeating-linear-gradient(90deg,var(--pri) 0 26px,transparent 26px 34px);
+    mask-image:linear-gradient(90deg,transparent,#000 25%,#000 75%,transparent)}
   #estado-chip{margin-left:2vw;font-size:1.35vh;letter-spacing:.22em;padding:.55vh 1vw;
     border:1px solid var(--border);color:var(--pri);display:flex;align-items:center;gap:.6vw;
     clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
@@ -112,6 +135,8 @@
   footer{position:fixed;bottom:0;left:0;right:0;height:5vh;z-index:4;display:flex;align-items:center;
     padding:0 1.8vw;font-family:Consolas,monospace;font-size:1.2vh;letter-spacing:.14em;opacity:.75;
     background:linear-gradient(0deg,rgba(5,8,10,.85),transparent)}
+  #telemetria{color:var(--pri);opacity:.65;letter-spacing:.08em}
+  #uptime{opacity:.85}
   footer .sep{margin:0 1vw;opacity:.4}
   #pie-der{margin-left:auto;display:flex;align-items:center;gap:.5vw}
   #mic-med{display:inline-flex;gap:2px;align-items:flex-end;height:1.6vh}
@@ -130,7 +155,10 @@
 <div id="vig"></div>
 
 <header>
-  <div id="logo">I.R.I.S.</div>
+  <div id="logo-zona">
+    <div id="logo">I.R.I.S.</div>
+    <div id="logo-sub">MARK II · NÚCLEO GEMINI LIVE</div>
+  </div>
   <div id="estado-chip"><span id="estado-dot"></span><span id="estado-txt">INICIANDO</span></div>
   <div id="botones">
     <div class="btn" id="b-min" title="Minimizar">─</div>
@@ -196,12 +224,14 @@
 <footer>
   <span id="f-mic">MIC: --</span><span class="sep">│</span>
   <span id="f-spk">OUT: --</span><span class="sep">│</span>
-  <span>NÚCLEO GEMINI LIVE</span>
+  <span id="uptime">T+00:00:00</span><span class="sep">│</span>
+  <span id="telemetria">0x00 00 00 00</span>
   <div id="pie-der">
     <span id="mic-med"><i></i><i></i><i></i><i></i><i></i></span>
     <span id="f-ver">I.R.I.S. v2</span>
   </div>
 </footer>
+<div id="tira"></div>
 
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
 <script>
@@ -229,6 +259,7 @@ window.setThemeColors = c => {
 window.updateVolume = v => { S.mic = Math.min(1, v * 3.2); };
 window.updateVoice  = v => { S.voz = Math.min(1, v); };
 window.updateState  = st => {
+  if (st !== S.estado) S.flashT = performance.now();   // onda expansiva al cambiar
   S.estado = st;
   const chip = document.getElementById("estado-txt");
   const nombres = {IDLE:"EN GUARDIA", LISTENING:"ESCUCHANDO", SPEAKING:"HABLANDO",
@@ -317,6 +348,33 @@ sl.addEventListener("change", () => {
   if (S.bridge && S.bridge.set_system_volume) S.bridge.set_system_volume(parseInt(sl.value));
 });
 
+/* ══════════════ Decoración futurista automática ══════════════ */
+// Brackets de esquina + índice de sección en cada panel, sin tocar el HTML
+document.querySelectorAll(".panel").forEach((p, i) => {
+  for (const c of ["a", "b", "c", "d"]) {
+    const e = document.createElement("i"); e.className = "esq " + c; p.appendChild(e);
+  }
+  const t = p.querySelector(".ptitle");
+  if (t && !t.querySelector(".idx")) {
+    const idx = document.createElement("span");
+    idx.className = "idx";
+    idx.textContent = String(i + 1).padStart(2, "0") + " //";
+    t.prepend(idx);
+  }
+});
+
+// Telemetría hexadecimal viva + tiempo de sesión en el pie
+const _t0 = Date.now();
+setInterval(() => {
+  const b = () => Math.floor(Math.random() * 256).toString(16).padStart(2, "0").toUpperCase();
+  document.getElementById("telemetria").textContent = `0x${b()} ${b()} ${b()} ${b()}`;
+  const s = Math.floor((Date.now() - _t0) / 1000);
+  const hh = String(Math.floor(s / 3600)).padStart(2, "0");
+  const mm = String(Math.floor(s % 3600 / 60)).padStart(2, "0");
+  const ss = String(s % 60).padStart(2, "0");
+  document.getElementById("uptime").textContent = `T+${hh}:${mm}:${ss}`;
+}, 300);
+
 /* selector de temas (funcional: persiste en jarvis_config.json) */
 const TEMAS = {green:"#00ff00", cyan:"#00ffff", red:"#ff0000", purple:"#9d00ff", gold:"#f59e0b", white:"#ffffff"};
 const zonaTemas = document.getElementById("temas");
@@ -352,7 +410,28 @@ function crearParticulas() {
   });
 }
 crearParticulas();
-setInterval(() => { const n = Math.round(240 * S.calidad); if (Math.abs(n - parts.length) > 20) crearParticulas(); }, 3000);
+
+/* ✨ polvo estelar de fondo: deriva lenta por toda la pantalla */
+const polvo = [];
+function crearPolvo() {
+  polvo.length = 0;
+  const n = Math.round(120 * S.calidad);
+  for (let i = 0; i < n; i++) polvo.push({
+    x: Math.random(), y: Math.random(),
+    vx: (Math.random() - 0.5) * 0.00006, vy: (Math.random() - 0.5) * 0.00006,
+    s: 0.4 + Math.random() * 1.3, f: Math.random() * Math.PI * 2,
+  });
+}
+crearPolvo();
+
+/* 🛰️ satélites que orbitan el anillo exterior */
+const sats = [
+  { a: 0.3, v: 0.0035, r: 1.47 }, { a: 2.4, v: -0.0022, r: 1.47 }, { a: 4.6, v: 0.0016, r: 1.47 },
+];
+setInterval(() => {
+  const n = Math.round(240 * S.calidad);
+  if (Math.abs(n - parts.length) > 20) { crearParticulas(); crearPolvo(); }
+}, 3000);
 
 /* barras del espectro (impulsadas por el nivel real, con ruido por barra) */
 const NB = 108, barras = new Float32Array(NB), objetivo = new Float32Array(NB);
@@ -383,6 +462,24 @@ function marco(tNow) {
                 : S.estado === "IDLE" ? 0.05 + 0.03 * Math.sin(t * 1.1)
                 : Math.max(S.micSuave, 0.06 + 0.04 * Math.sin(t * 1.7));
   const [cr, cg, cb] = col;
+
+  /* ✨ polvo estelar (deriva y titila) */
+  for (const d of polvo) {
+    d.x = (d.x + d.vx * dt + 1) % 1; d.y = (d.y + d.vy * dt + 1) % 1;
+    const tw = 0.5 + 0.5 * Math.sin(t * 1.4 + d.f);
+    cx.fillStyle = `rgba(${cr},${cg},${cb},${0.05 + tw * 0.13})`;
+    cx.beginPath(); cx.arc(d.x * W, d.y * H, d.s * (W / 2100), 0, 7); cx.fill();
+  }
+
+  /* ✚ retícula central (líneas de horizonte que atraviesan el núcleo) */
+  let gh = cx.createLinearGradient(0, CY, W, CY);
+  gh.addColorStop(0, "rgba(0,0,0,0)");
+  gh.addColorStop(0.28, `rgba(${cr},${cg},${cb},0.14)`);
+  gh.addColorStop(0.5, "rgba(0,0,0,0)");
+  gh.addColorStop(0.72, `rgba(${cr},${cg},${cb},0.14)`);
+  gh.addColorStop(1, "rgba(0,0,0,0)");
+  cx.strokeStyle = gh; cx.lineWidth = 1;
+  cx.beginPath(); cx.moveTo(0, CY); cx.lineTo(W, CY); cx.stroke();
 
   /* halo del núcleo */
   const rNucleo = R * (0.5 + energia * 0.34);
@@ -419,6 +516,58 @@ function marco(tNow) {
   cx.strokeStyle = `rgba(${cr},${cg},${cb},0.28)`;
   cx.lineWidth = Math.max(1, W / 1600);
   cx.beginPath(); cx.arc(CX, CY, base, 0, 7); cx.stroke();
+
+  /* ⭕ ANILLO DE GRADOS exterior: 72 marcas girando despacio (cada 5ª más larga) */
+  const rGrados = base * 1.42;
+  const rotG = t * 0.05;
+  cx.lineWidth = Math.max(1, W / 1900);
+  for (let i = 0; i < 72; i++) {
+    const a = rotG + (i / 72) * Math.PI * 2;
+    const largo = (i % 5 === 0 ? 0.045 : 0.02) * base;
+    cx.strokeStyle = `rgba(${cr},${cg},${cb},${i % 5 === 0 ? 0.5 : 0.25})`;
+    cx.beginPath();
+    cx.moveTo(CX + Math.cos(a) * rGrados, CY + Math.sin(a) * rGrados);
+    cx.lineTo(CX + Math.cos(a) * (rGrados + largo), CY + Math.sin(a) * (rGrados + largo));
+    cx.stroke();
+  }
+
+  /* ⭕ ARCOS SEGMENTADOS contra-rotando (dos coronas, estilo reactor) */
+  cx.lineWidth = Math.max(2, W / 850);
+  for (let k = 0; k < 5; k++) {
+    const a0 = -t * 0.22 + k * (Math.PI * 2 / 5);
+    cx.strokeStyle = `rgba(${cr},${cg},${cb},${0.30 + energia * 0.4})`;
+    cx.beginPath(); cx.arc(CX, CY, base * 1.30, a0, a0 + 0.72); cx.stroke();
+  }
+  cx.lineWidth = Math.max(1, W / 1500);
+  for (let k = 0; k < 3; k++) {
+    const a0 = t * 0.34 + k * (Math.PI * 2 / 3);
+    cx.strokeStyle = `rgba(${cr},${cg},${cb},0.36)`;
+    cx.beginPath(); cx.arc(CX, CY, base * 0.90, a0, a0 + 1.35); cx.stroke();
+  }
+
+  /* 🛰️ satélites orbitando con estela */
+  for (const s of sats) {
+    s.a += s.v * dt * (1 + energia * 1.5);
+    const sx = CX + Math.cos(s.a) * base * s.r, sy = CY + Math.sin(s.a) * base * s.r;
+    cx.strokeStyle = `rgba(${cr},${cg},${cb},0.30)`;
+    cx.lineWidth = Math.max(1.5, W / 1400);
+    cx.beginPath(); cx.arc(CX, CY, base * s.r, s.a - 0.5 * Math.sign(s.v), s.a, s.v < 0); cx.stroke();
+    const tam = Math.max(3, W / 480) * 0.55;
+    cx.save(); cx.translate(sx, sy); cx.rotate(s.a + Math.PI / 4);
+    cx.fillStyle = `rgba(${cr},${cg},${cb},0.95)`;
+    cx.fillRect(-tam / 2, -tam / 2, tam, tam);
+    cx.restore();
+  }
+
+  /* 💥 onda expansiva al cambiar de estado */
+  if (S.flashT) {
+    const f = (tNow - S.flashT) / 700;
+    if (f < 1) {
+      cx.strokeStyle = `rgba(${cr},${cg},${cb},${(1 - f) * 0.6})`;
+      cx.lineWidth = Math.max(2, W / 800) * (1 - f);
+      cx.beginPath(); cx.arc(CX, CY, base * (1 + f * 1.1), 0, 7); cx.stroke();
+    } else S.flashT = 0;
+  }
 
   /* arco distintivo por estado */
   if (S.estado === "WINDOW") {          // ventana de seguimiento: barrido ámbar
