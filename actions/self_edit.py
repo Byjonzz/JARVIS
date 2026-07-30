@@ -8,6 +8,10 @@ import threading
 import subprocess
 import re
 
+# ⏱️ Límite que respeta main.py: generar un parche con el modelo razonador de
+# OpenRouter tarda minutos (el default de 30s cancelaba la espera siempre).
+TOOL_TIMEOUT = 300
+
 def ejecutar_reinicio(archivo_modificado):
     time.sleep(6)
     print(f"\n🔄 [SISTEMA] Aplicando cambios de '{archivo_modificado}'. Reiniciando núcleo...")
@@ -77,18 +81,26 @@ def self_edit(parameters: dict) -> str:
             "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
             "Content-Type": "application/json"
         }
+        # Mismo modelo del auto-programador, cambiable con OPENROUTER_MODEL en .env
+        modelo = (os.getenv("OPENROUTER_MODEL") or "nvidia/nemotron-3-ultra-550b-a55b:free").strip()
         payload = {
-            "model": "openai/gpt-oss-120b:free", # 🟢 Aquí está tu modelo gratuito
+            "model": modelo,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.0
+            "temperature": 0.0,
+            # Los modelos razonadores devuelven su "pensamiento" antes del parche;
+            # esto lo excluye para que el formato [BUSCAR]/[REEMPLAZAR] llegue limpio.
+            "reasoning": {"exclude": True}
         }
-        
-        print(f"[DEBUG] Generando parche con OpenRouter...")
-        response = requests.post(url, headers=headers, json=payload, timeout=60)
-        response.raise_for_status()
-        
+
+        print(f"[DEBUG] Generando parche con OpenRouter ({modelo})...")
+        response = requests.post(url, headers=headers, json=payload, timeout=280)
+        if response.status_code != 200:
+            return f"Error de OpenRouter (HTTP {response.status_code}): {response.text[:300]}"
+
         datos = response.json()
-        texto_completo = datos["choices"][0]["message"]["content"]
+        if "choices" not in datos or not datos["choices"]:
+            return f"OpenRouter respondió sin contenido: {str(datos)[:300]}"
+        texto_completo = datos["choices"][0]["message"]["content"] or ""
                     
         print(f"\n[DEBUG] --- TEXTO CRUDO GENERADO POR LA IA ---")
         print(texto_completo.strip())
@@ -123,8 +135,9 @@ def self_edit(parameters: dict) -> str:
         # PLAN C: Extractor Crudo
         else:
             print("[DEBUG] Plan C (Extractor Crudo)...")
+            # El ÚLTIMO bloque: si el modelo razona en voz alta, el definitivo va al final
             bloques_codigo = re.findall(r'```(?:python|py)?[ \t]*\r?\n(.*?)```', texto_completo, re.DOTALL)
-            texto_a_procesar = bloques_codigo[0] if bloques_codigo else texto_completo
+            texto_a_procesar = bloques_codigo[-1] if bloques_codigo else texto_completo
             
             reemplazar_lines = [l for l in texto_a_procesar.split('\n') if l.strip()]
             for linea_nueva in reemplazar_lines:
@@ -151,12 +164,19 @@ def self_edit(parameters: dict) -> str:
 
 TOOL_DEF = {
     "name": "self_edit",
-    "description": "Herramienta CRÍTICA. Modifica los archivos internos de JARVIS. Úsalo OBLIGATORIAMENTE y sin dudarlo cuando el usuario te pida cambiar el color de la interfaz gráfica o editar código.",
+    "description": (
+        "Herramienta CRÍTICA. EDITA archivos y herramientas que YA EXISTEN dentro de JARVIS: "
+        "úsala sin dudar cuando el usuario pida arreglar, corregir, mejorar o cambiar una "
+        "herramienta ya creada (archivos de actions/) o la interfaz (colores → 'ui.py'). "
+        "Si lo que pide es crear una herramienta NUEVA que no existe, NO uses esta: usa "
+        "'auto_programmer'. Tarda hasta 3 minutos: avisa al usuario de que trabajarás en "
+        "ello y NO la llames dos veces por la misma petición."
+    ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "target_file": {"type": "STRING", "description": "El archivo a modificar (siempre usa 'ui.py' para colores)."},
-            "request": {"type": "STRING", "description": "Lo que el usuario pidió (ej. 'cambiar a azul neón')."}
+            "target_file": {"type": "STRING", "description": "El archivo a modificar (ej. 'os_control.py' para esa herramienta, 'ui.py' para colores)."},
+            "request": {"type": "STRING", "description": "Lo que el usuario pidió (ej. 'arregla el control de volumen', 'cambiar a azul neón')."}
         },
         "required": ["target_file", "request"]
     }

@@ -34,6 +34,8 @@ CHANNELS = 1
 MODEL = "gemini-3.1-flash-live-preview"
 TOOL_DECLARATIONS = []
 FUNCIONES_DISPONIBLES = {}
+TOOL_TIMEOUTS = {}          # nombre → segundos; una acción puede declarar TOOL_TIMEOUT
+TIMEOUT_HERRAMIENTA = 30.0  # límite por defecto para las que no declaran nada
 
 def log_guardia(mensaje):
     ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -124,6 +126,13 @@ def auto_descubrir_herramientas():
                     FUNCIONES_DISPONIBLES[nombre] = getattr(modulo, nombre)
                 if hasattr(modulo, "TOOL_DEF"):
                     TOOL_DECLARATIONS.append(modulo.TOOL_DEF)
+                # ⏱️ Las herramientas lentas (auto_programmer, self_edit llaman a una
+                # IA externa que tarda minutos) declaran su propio límite de tiempo.
+                if hasattr(modulo, "TOOL_TIMEOUT"):
+                    try:
+                        TOOL_TIMEOUTS[nombre] = float(modulo.TOOL_TIMEOUT)
+                    except Exception:
+                        pass
             except Exception as e:
                 log_guardia(f"⚠️ Error al auto-descubrir '{nombre}':\n{traceback.format_exc()}")
                 
@@ -582,7 +591,12 @@ class IRISCore:
 
                 ga = getattr(response, 'go_away', None)
                 if ga is not None:
-                    log_guardia(f"⚠️ El servidor anuncia cierre de sesión (go_away, tiempo restante: {getattr(ga, 'time_left', '?')}).")
+                    # El servidor limita la duración de cada sesión. Si ignoramos el
+                    # aviso nos corta con error 1008; mejor cerrar nosotros y volver
+                    # a entrar con el asa de reanudación (la conversación continúa).
+                    log_guardia(f"🔄 El servidor pide renovar la sesión (go_away, tiempo restante: "
+                                f"{getattr(ga, 'time_left', '?')}). Reconectando con el contexto intacto.")
+                    return
 
                 if sc:
                     # 🧠 Transcripción de TU voz (materia prima del aprendizaje neuronal)
@@ -665,17 +679,20 @@ class IRISCore:
                                     threading.Thread(target=entrenar_en_fondo, daemon=True).start()
                                     self.texto_usuario = ""
 
+                                limite = TOOL_TIMEOUTS.get(name, TIMEOUT_HERRAMIENTA)
                                 try:
                                     if name in FUNCIONES_DISPONIBLES:
                                         func = FUNCIONES_DISPONIBLES[name]
                                         if asyncio.iscoroutinefunction(func):
-                                            resultado = await asyncio.wait_for(func(args), timeout=30.0)
+                                            resultado = await asyncio.wait_for(func(args), timeout=limite)
                                         else:
-                                            resultado = await asyncio.wait_for(asyncio.to_thread(func, args), timeout=30.0)
+                                            resultado = await asyncio.wait_for(asyncio.to_thread(func, args), timeout=limite)
                                     else:
                                         resultado = f"No registrada: {name}"
                                 except asyncio.TimeoutError:
-                                    resultado = f"Error: Timeout."
+                                    log_guardia(f"⏱️ {name} superó su límite de {limite:.0f}s.")
+                                    resultado = (f"Error: la herramienta tardó más de {limite:.0f} segundos y se "
+                                                 "canceló la espera. Informa al usuario con honestidad.")
                                 except Exception as err:
                                     resultado = f"Error: {err}"
 

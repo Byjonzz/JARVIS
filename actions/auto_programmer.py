@@ -3,6 +3,10 @@ import requests
 import json
 import re
 
+# ⏱️ Límite que respeta main.py: el modelo razonador de OpenRouter tarda minutos
+# en escribir una herramienta completa (el default de 30s lo mataba siempre).
+TOOL_TIMEOUT = 300
+
 def auto_programmer(parameters: dict) -> str:
     request = parameters.get("request", "")
     tool_name = parameters.get("tool_name", "nueva_herramienta")
@@ -45,7 +49,7 @@ def auto_programmer(parameters: dict) -> str:
             "reasoning": {"exclude": True}
         }
 
-        response = requests.post(url, headers=headers, json=payload, timeout=120)
+        response = requests.post(url, headers=headers, json=payload, timeout=280)
         if response.status_code != 200:
             # El detalle del servidor (modelo inexistente, cuota agotada...) es lo
             # único que permite diagnosticar; sin esto solo veíamos "hubo un problema".
@@ -84,7 +88,13 @@ def auto_programmer(parameters: dict) -> str:
 # 🟢 EL MANUAL AUTODESCUBRIBLE
 TOOL_DEF = {
     "name": "auto_programmer",
-    "description": "Permite a I.R.I.S. escribir su propio código Python usando OpenRouter. Úsalo cuando el usuario te pida crear una nueva herramienta o automatizar algo complejo en Windows.",
+    "description": (
+        "Crea desde cero una herramienta NUEVA que aún no existe (escribe un archivo Python "
+        "nuevo en actions/). Úsalo SOLO cuando el usuario pida crear o inventar una capacidad "
+        "que no tienes. Si pide ARREGLAR, EDITAR o MEJORAR una herramienta o archivo que YA "
+        "existe, NO uses esta: usa 'self_edit'. Tarda hasta 3 minutos: avisa al usuario de que "
+        "trabajarás en ello y NO la llames dos veces por la misma petición."
+    ),
     "parameters": {
         "type": "OBJECT",
         "properties": {
