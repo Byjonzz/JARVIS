@@ -36,6 +36,9 @@ TOOL_DECLARATIONS = []
 FUNCIONES_DISPONIBLES = {}
 TOOL_TIMEOUTS = {}          # nombre → segundos; una acción puede declarar TOOL_TIMEOUT
 TIMEOUT_HERRAMIENTA = 30.0  # límite por defecto para las que no declaran nada
+TOOL_EN_FONDO = set()       # acciones con TOOL_BACKGROUND: se ejecutan en segundo plano
+                            # y el resultado se anuncia por voz cuando terminan de verdad
+CATALOG_VERSION = 0         # sube en cada auto_descubrir: run() detecta catálogos obsoletos
 
 def log_guardia(mensaje):
     ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -107,9 +110,20 @@ def _parece_pregunta(texto: str) -> bool:
 
 def auto_descubrir_herramientas():
     log_guardia("⚙️ Descubriendo herramientas en /actions...")
-    global TOOL_DECLARATIONS, FUNCIONES_DISPONIBLES
+    global TOOL_DECLARATIONS, FUNCIONES_DISPONIBLES, CATALOG_VERSION
+
+    # El reload reinicia el estado en memoria de los módulos. Casi todo se recarga
+    # de disco solo (huella de voz, pesos de la red), pero un enrolamiento PENDIENTE
+    # ("aprende mi voz" aún sin grabar) se perdería en silencio: se preserva a mano.
+    enroll_pendiente = False
+    try:
+        enroll_pendiente = importlib.import_module("actions.voice_guard").enroll_pendiente()
+    except Exception:
+        pass
+
     TOOL_DECLARATIONS.clear()
     FUNCIONES_DISPONIBLES.clear()
+    TOOL_EN_FONDO.clear()
     
     if not os.path.exists("actions"):
         os.makedirs("actions")
@@ -133,10 +147,19 @@ def auto_descubrir_herramientas():
                         TOOL_TIMEOUTS[nombre] = float(modulo.TOOL_TIMEOUT)
                     except Exception:
                         pass
+                if getattr(modulo, "TOOL_BACKGROUND", False):
+                    TOOL_EN_FONDO.add(nombre)
             except Exception as e:
                 log_guardia(f"⚠️ Error al auto-descubrir '{nombre}':\n{traceback.format_exc()}")
                 
-    log_guardia(f"⚙️ Herramientas cargadas: {list(FUNCIONES_DISPONIBLES.keys())}")
+    if enroll_pendiente:
+        try:
+            importlib.import_module("actions.voice_guard").solicitar_enrolamiento()
+        except Exception:
+            pass
+
+    CATALOG_VERSION += 1
+    log_guardia(f"⚙️ Herramientas cargadas (catálogo v{CATALOG_VERSION}): {list(FUNCIONES_DISPONIBLES.keys())}")
 
 class IRISCore:
     def __init__(self, ui):
@@ -163,6 +186,25 @@ class IRISCore:
         self._resumption_handle = None # asa para reanudar la sesión Live si la conexión se cae
         self._ultima_llamada = None    # firma (herramienta, args) de la última ejecución real
         self._omitir_repeticion = False  # tras reanudar sesión: ignorar la llamada calcada
+        self.session_actual = None     # sesión Live viva (para inyectar avisos de tareas)
+        self.avisos_queue = asyncio.Queue()      # resultados de tareas en segundo plano
+        self._renovar_sesion = asyncio.Event()   # pide reconectar para recargar herramientas
+        self._tareas_fondo_activas = 0           # tareas de fondo aún trabajando
+        self._tareas_fondo = set()               # referencias vivas (asyncio solo guarda débiles)
+
+        # 🔁 Si venimos de un reinicio del núcleo, retomamos la MISMA conversación:
+        # _reiniciar_tras_hablar dejó el asa de reanudación guardada en disco.
+        try:
+            ruta_reanudar = os.path.join("config", "session_reanudar.json")
+            if os.path.exists(ruta_reanudar):
+                with open(ruta_reanudar, "r", encoding="utf-8") as f:
+                    datos_reanudar = json.load(f)
+                os.remove(ruta_reanudar)
+                if datos_reanudar.get("handle") and time.time() - float(datos_reanudar.get("ts", 0)) < 180:
+                    self._resumption_handle = datos_reanudar["handle"]
+                    log_guardia("🔁 Reinicio del núcleo detectado: retomaré la conversación donde estaba.")
+        except Exception as e:
+            log_guardia(f"⚠️ No pude leer el asa de reanudación tras el reinicio: {e}")
 
         # 🎚️ "Sensibilidad del micrófono" de Ajustes: hasta ahora se guardaba en el
         # config y NADIE la leía. Es el suelo mínimo del detector de voz, así que un
@@ -680,6 +722,57 @@ class IRISCore:
                                     self.texto_usuario = ""
 
                                 limite = TOOL_TIMEOUTS.get(name, TIMEOUT_HERRAMIENTA)
+
+                                # 🚀 SEGUNDO PLANO: las herramientas lentas (programar/editar
+                                # código) no secuestran la conversación. Se responde al momento
+                                # que la tarea quedó lanzada y, cuando termina DE VERDAD,
+                                # _avisar_tareas inyecta el resultado para que I.R.I.S lo
+                                # anuncie por voz, esté el usuario en lo que esté.
+                                if name in TOOL_EN_FONDO and name in FUNCIONES_DISPONIBLES:
+                                    func = FUNCIONES_DISPONIBLES[name]
+
+                                    async def _trabajo_fondo(nombre=name, funcion=func, argumentos=args, tope=limite):
+                                        res = "Error: la tarea fue interrumpida."
+                                        try:
+                                            if asyncio.iscoroutinefunction(funcion):
+                                                res = await asyncio.wait_for(funcion(argumentos), timeout=tope)
+                                            else:
+                                                res = await asyncio.wait_for(asyncio.to_thread(funcion, argumentos), timeout=tope)
+                                        except asyncio.TimeoutError:
+                                            # La espera se cancela, pero el hilo HTTP sigue vivo:
+                                            # el archivo podría aparecer solo minutos después.
+                                            res = (f"Error: tardó más de {tope:.0f} segundos y se canceló la espera. "
+                                                   "ADVERTENCIA: el trabajo podría completarse solo más tarde; "
+                                                   "que el usuario lo verifique antes de repetir la orden.")
+                                        except Exception as e:
+                                            res = f"Error: {e}"
+                                        finally:
+                                            # El aviso se encola ANTES de bajar el contador: si un
+                                            # reinicio espera "cero tareas vivas", debe encontrar
+                                            # este resultado ya en la cola, nunca perderlo.
+                                            try:
+                                                await self.avisos_queue.put((nombre, str(res)))
+                                            finally:
+                                                self._tareas_fondo_activas -= 1
+
+                                    self._tareas_fondo_activas += 1
+                                    t = asyncio.create_task(_trabajo_fondo())
+                                    # Referencia fuerte: el event loop solo guarda débiles y
+                                    # el recolector podría matar la tarea a medio trabajo.
+                                    self._tareas_fondo.add(t)
+                                    t.add_done_callback(self._tareas_fondo.discard)
+                                    log_guardia(f"🚀 {name} lanzada en SEGUNDO PLANO (límite {limite:.0f}s). La conversación sigue libre.")
+                                    if self.loop: self.loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, f"🚀 {name} trabajando en segundo plano...")
+
+                                    kwargs_fr = {"name": name, "response": {"result": (
+                                        f"TAREA INICIADA en segundo plano (puede tardar hasta {max(1, int(limite // 60))} minutos). "
+                                        "Dile al usuario con una frase corta que ya estás trabajando en ello y que le avisarás "
+                                        "en cuanto esté lista. Mientras tanto sigues disponible para cualquier otra orden. "
+                                        "NO vuelvas a llamar esta herramienta para esta misma petición.")}}
+                                    if getattr(fc, "id", None): kwargs_fr["id"] = fc.id
+                                    respuestas_herramientas.append(types.FunctionResponse(**kwargs_fr))
+                                    continue
+
                                 try:
                                     if name in FUNCIONES_DISPONIBLES:
                                         func = FUNCIONES_DISPONIBLES[name]
@@ -731,6 +824,135 @@ class IRISCore:
             log_guardia(f"❌ Error procesando mensajes de Gemini (la sesión se reiniciará):\n{traceback.format_exc()}")
             return
 
+    async def _avisar_tareas(self):
+        """📬 El mensajero de las tareas en segundo plano.
+
+        Espera los resultados que dejan las herramientas lanzadas en fondo
+        (auto_programmer, self_edit) y los inyecta en la sesión Live como aviso
+        interno: I.R.I.S los anuncia por voz al instante, sin importar qué esté
+        haciendo el usuario. Si la herramienta creó o cambió código, recarga el
+        catálogo y renueva la sesión para que Gemini ya la tenga disponible.
+        Si el cambio fue en el núcleo (ui.py, main.py), el reinicio se hace AQUÍ,
+        cuando I.R.I.S termina de hablar, nunca a mitad de la frase.
+        """
+        while True:
+            nombre, resultado = await self.avisos_queue.get()
+            reinicio = await self._procesar_aviso(nombre, resultado)
+            if reinicio:
+                await self._reiniciar_tras_hablar()
+
+    async def _procesar_aviso(self, nombre, resultado):
+        """Entrega un aviso al modelo. Devuelve True si el cambio exige reiniciar."""
+        reinicio = "[REINICIO_REQUERIDO]" in resultado
+        resultado = resultado.replace("[REINICIO_REQUERIDO]", "").strip()
+
+        log_guardia(f"📬 Tarea en segundo plano terminada: {nombre} → {resultado[:150]}")
+        if self.loop: self.loop.call_soon_threadsafe(self.ui.puente.senal_log.emit, f"📬 {nombre} terminó: {resultado[:90]}")
+        try:
+            import winsound
+            winsound.PlaySound("SystemAsterisk", winsound.SND_ALIAS | winsound.SND_ASYNC)
+        except Exception: pass
+
+        exito = not resultado.lower().startswith("error")
+
+        # Tras terminar una tarea de fondo, cualquier repetición que pida el usuario
+        # ("inténtalo de nuevo") es intencional: que el anti-eco no se la trague.
+        self._ultima_llamada = None
+
+        texto = (
+            "[AVISO INTERNO DEL SISTEMA — esto NO lo dijo el usuario] La tarea en segundo plano "
+            f"'{nombre}' acaba de terminar. Resultado: {resultado} — Anúncialo AHORA al usuario "
+            "con una frase breve y natural en español; si fue un error, dilo con honestidad."
+        )
+        for intento in range(60):  # hasta ~2 min esperando una sesión viva donde entregarlo
+            ses = self.session_actual
+            # 🕐 Cortesía (máx ~1 min): si I.R.I.S está hablando, escuchando tu
+            # respuesta a una pregunta, o grabando tu huella, el aviso espera un
+            # hueco; interrumpir cerraría el micrófono en la cara del usuario o
+            # colaría la voz TTS dentro de la grabación de la huella.
+            ocupado = self.estado in ("ESCUCHANDO", "HABLANDO", "ENROLANDO") and intento < 30
+            if ses is not None and not ocupado:
+                try:
+                    await ses.send_client_content(
+                        turns=types.Content(role="user", parts=[types.Part.from_text(text=texto)]),
+                        turn_complete=True)
+                    break
+                except Exception as e:
+                    log_guardia(f"⚠️ Aviso de '{nombre}' no entregado aún ({e}). Reintento...")
+            await asyncio.sleep(2)
+        else:
+            log_guardia(f"❌ No pude entregar el aviso de '{nombre}' a ninguna sesión en 2 minutos.")
+
+        if exito and nombre in ("auto_programmer", "self_edit") and not reinicio:
+            # Nació o cambió una herramienta de actions/: PRIMERO se deja que
+            # I.R.I.S termine de hablar el anuncio y LUEGO se recarga el catálogo
+            # y se renueva la sesión. (Renovar antes mataba la sesión vieja con el
+            # anuncio a medio decir: el famoso corte a mitad de frase.)
+            await self._esperar_anuncio_hablado()
+            try:
+                auto_descubrir_herramientas()
+                self._renovar_sesion.set()
+            except Exception as e:
+                log_guardia(f"⚠️ No pude recargar el catálogo de herramientas: {e}")
+
+        return reinicio and exito
+
+    async def _esperar_anuncio_hablado(self, max_inicio_seg=15):
+        """Espera a que el anuncio EMPIECE a sonar (máx unos segundos) y termine."""
+        for _ in range(int(max_inicio_seg * 10)):
+            if self.estado == "HABLANDO":
+                break
+            await asyncio.sleep(0.1)
+        await self._esperar_fin_de_habla()
+
+    async def _esperar_fin_de_habla(self, max_seg=120):
+        """Espera a que I.R.I.S termine FÍSICAMENTE de hablar (bocina vacía)."""
+        for _ in range(int(max_seg * 10)):
+            if self.estado != "HABLANDO" and self.audio_in_queue.empty():
+                return
+            await asyncio.sleep(0.1)
+
+    async def _reiniciar_tras_hablar(self):
+        """🔄 Reinicio educado del núcleo: primero se termina de hablar, luego se
+        reinicia, y la conversación CONTINÚA tras el reinicio.
+
+        El método anterior (un temporizador ciego dentro de self_edit) mataba el
+        proceso a los pocos segundos: cortaba el anuncio de I.R.I.S a media frase
+        y la conversación se perdía entera.
+        """
+        log_guardia("⏳ Reinicio pendiente: esperando a que I.R.I.S termine de anunciarlo...")
+
+        # 1-2. Que el anuncio EMPIECE a sonar y TERMINE del todo
+        await self._esperar_anuncio_hablado(max_inicio_seg=20)
+
+        # 3. Si quedan tareas de fondo vivas, se les da tiempo (máx 5 min) y sus
+        #    avisos pendientes se entregan y se terminan de hablar antes de morir.
+        espera = 0
+        while self._tareas_fondo_activas > 0 and espera < 300:
+            await asyncio.sleep(1.0)
+            espera += 1
+        while not self.avisos_queue.empty():
+            try:
+                n, r = self.avisos_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            await self._procesar_aviso(n, r)   # los reinicios anidados dan igual: ya vamos a reiniciar
+            await self._esperar_fin_de_habla()
+
+        await asyncio.sleep(1.0)  # margen para el último trozo de audio en la bocina
+
+        # 4. Guardar el asa de reanudación: el proceso nuevo retoma ESTA conversación.
+        try:
+            with open(os.path.join("config", "session_reanudar.json"), "w", encoding="utf-8") as f:
+                json.dump({"handle": self._resumption_handle, "ts": time.time()}, f)
+        except Exception as e:
+            log_guardia(f"⚠️ No pude guardar el asa de reanudación: {e}")
+
+        log_guardia("🔄 Reiniciando la interfaz para aplicar los cambios del núcleo...")
+        import subprocess
+        subprocess.Popen([sys.executable] + sys.argv)
+        os._exit(0)
+
     async def _play_audio(self):
         stream = None
         try:
@@ -778,8 +1000,7 @@ class IRISCore:
         asyncio.create_task(self._listen_audio())
         asyncio.create_task(self._play_audio())
         asyncio.create_task(self._vigilar_microfono())
-        
-        tools = [{"function_declarations": TOOL_DECLARATIONS}] if TOOL_DECLARATIONS else None
+        asyncio.create_task(self._avisar_tareas())
         
         # INSTRUCCIÓN PSICOLÓGICA ANTI-SALUDOS
         instruccion_base = (
@@ -811,7 +1032,12 @@ class IRISCore:
             "te llega charla de fondo, mencionan a otro interlocutor), NO intervengas: responde texto vacío y guarda silencio.\n"
             "- Si el usuario pide que aprendas su voz, que solo le respondas a él, o configurar el guardián, usa la "
             "herramienta 'voice_guard' (action 'enroll' para grabar su huella, 'status', 'enable', 'disable', 'delete'). "
-            "Tras llamar 'enroll', repite sus instrucciones al usuario terminando en afirmación (sin pregunta)."
+            "Tras llamar 'enroll', repite sus instrucciones al usuario terminando en afirmación (sin pregunta).\n"
+            "- Las herramientas de programación (auto_programmer crea NUEVAS, self_edit edita EXISTENTES) trabajan en "
+            "SEGUNDO PLANO: al llamarlas, di brevemente que ya estás trabajando en ello y que avisarás al terminar; "
+            "mientras tanto sigue atendiendo cualquier otra orden con normalidad. Cuando recibas un mensaje que empiece "
+            "por '[AVISO INTERNO DEL SISTEMA', NO es el usuario hablando: es la señal de que la tarea terminó de verdad; "
+            "anuncia su resultado al usuario de inmediato con una frase breve."
         )
         
         while True:
@@ -837,6 +1063,11 @@ class IRISCore:
                 self._sil_seguidos = 0
                 self._enroll_datos = []
 
+                # Catálogo recalculado en cada conexión: si una tarea en segundo plano
+                # creó o editó una herramienta, la sesión renovada ya la incluye.
+                version_catalogo = CATALOG_VERSION
+                tools = [{"function_declarations": list(TOOL_DECLARATIONS)}] if TOOL_DECLARATIONS else None
+
                 voz = (self.cfg.get("jarvis_voice") or "Aoede").strip()
                 config = types.LiveConnectConfig(
                     response_modalities=["AUDIO"],
@@ -857,20 +1088,33 @@ class IRISCore:
                     # En una sesión reanudada, la primera llamada de herramienta idéntica
                     # a la última ejecutada se considera un eco y se ignora.
                     self._omitir_repeticion = bool(self._resumption_handle)
+                    # El clear solo procede si esta sesión nació con el catálogo al
+                    # día: si una tarea de fondo lo cambió DURANTE el handshake,
+                    # el evento queda puesto y la renovación se ejecuta enseguida.
+                    if CATALOG_VERSION == version_catalogo:
+                        self._renovar_sesion.clear()
+                    self.session_actual = session
                     log_guardia(f"✅ Conexión con Gemini establecida{reanudada}.")
                     self.actualizar_ui()
 
                     send_task = asyncio.create_task(self._send_realtime(session))
                     receive_task = asyncio.create_task(self._receive_audio(session))
+                    renovar_task = asyncio.create_task(self._renovar_sesion.wait())
 
-                    done, pending = await asyncio.wait([send_task, receive_task], return_when=asyncio.FIRST_COMPLETED)
+                    done, pending = await asyncio.wait([send_task, receive_task, renovar_task],
+                                                       return_when=asyncio.FIRST_COMPLETED)
 
+                    self.session_actual = None
                     for task in pending: task.cancel()
-                    for task in done:
-                        try: task.result()
-                        except Exception:
-                            log_guardia(f"🔌 La sesión terminó con error:\n{traceback.format_exc()}")
-                    log_guardia("🔄 Sesión con Gemini finalizada. Reconectando...")
+                    if renovar_task in done:
+                        log_guardia("🔄 Renovando la sesión para cargar el catálogo de herramientas actualizado.")
+                    else:
+                        for task in done:
+                            if task is renovar_task: continue
+                            try: task.result()
+                            except Exception:
+                                log_guardia(f"🔌 La sesión terminó con error:\n{traceback.format_exc()}")
+                        log_guardia("🔄 Sesión con Gemini finalizada. Reconectando...")
 
             except Exception:
                 # La conexión no pudo ni abrirse (red, API key, handle caducado...).

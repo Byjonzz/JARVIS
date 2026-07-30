@@ -6,6 +6,8 @@ import re
 # ⏱️ Límite que respeta main.py: el modelo razonador de OpenRouter tarda minutos
 # en escribir una herramienta completa (el default de 30s lo mataba siempre).
 TOOL_TIMEOUT = 300
+# 🚀 main.py la ejecuta en segundo plano y anuncia por voz cuando termina de verdad.
+TOOL_BACKGROUND = True
 
 def auto_programmer(parameters: dict) -> str:
     request = parameters.get("request", "")
@@ -85,11 +87,19 @@ def auto_programmer(parameters: dict) -> str:
             return ("El modelo no devolvió código Python utilizable. "
                     f"Empieza de su respuesta: {texto[:200]}")
 
+        # 🛡️ Validar ANTES de escribir: código con error de sintaxis nunca cargaría
+        # y el aviso por voz mentiría diciendo que la herramienta está lista.
+        try:
+            compile(codigo, ruta, "exec")
+        except SyntaxError as e:
+            return (f"Error: el código generado no compila (línea {e.lineno}: {e.msg}). "
+                    "No escribí ningún archivo; conviene reintentar la creación.")
+
         with open(ruta, "w", encoding="utf-8") as f:
             f.write(codigo)
 
         return (f"Éxito: usé el modelo {modelo} para programar la herramienta '{tool_name}.py'. "
-                "Dile al usuario que reinicie la interfaz para cargarla.")
+                "El sistema la cargará automáticamente: ya se puede usar, sin reiniciar nada.")
 
     except Exception as e:
         return f"Error crítico en el auto-programador conectado a OpenRouter: {e}"

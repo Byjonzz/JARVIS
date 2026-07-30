@@ -1,22 +1,20 @@
 import os
-import sys
 import requests
 import traceback
 import json
-import time
-import threading
-import subprocess
 import re
 
 # ⏱️ Límite que respeta main.py: generar un parche con el modelo razonador de
 # OpenRouter tarda minutos (el default de 30s cancelaba la espera siempre).
 TOOL_TIMEOUT = 300
+# 🚀 main.py la ejecuta en segundo plano y anuncia por voz cuando termina de verdad.
+TOOL_BACKGROUND = True
 
-def ejecutar_reinicio(archivo_modificado):
-    time.sleep(6)
-    print(f"\n🔄 [SISTEMA] Aplicando cambios de '{archivo_modificado}'. Reiniciando núcleo...")
-    subprocess.Popen([sys.executable] + sys.argv)
-    os._exit(0)
+# El reinicio ya NO lo hace esta herramienta: antes un temporizador ciego de 6-12s
+# mataba el proceso a mitad del anuncio por voz y se perdía la conversación. Ahora
+# se devuelve el marcador MARCA_REINICIO y main.py reinicia cuando I.R.I.S. TERMINA
+# de hablar, guardando el asa de la sesión para retomar el contexto tras reiniciar.
+MARCA_REINICIO = "[REINICIO_REQUERIDO]"
 
 def self_edit(parameters: dict) -> str:
     target_file = parameters.get("target_file", "").strip()
@@ -151,10 +149,29 @@ def self_edit(parameters: dict) -> str:
                         print(f"[DEBUG] [Plan C] Variable '{var_name}' inyectada.")
 
         if cambios_aplicados > 0:
+            # 🛡️ Validar ANTES de escribir: un parche con error de sintaxis haría
+            # desaparecer la herramienta del catálogo al recargarla, justo mientras
+            # el aviso por voz dice "ya se puede usar".
+            if ruta_encontrada.endswith(".py"):
+                try:
+                    compile(codigo_nuevo, ruta_encontrada, "exec")
+                except SyntaxError as e:
+                    return (f"Error: el parche generado para {nombre_archivo} no compila "
+                            f"(línea {e.lineno}: {e.msg}). No toqué el archivo; el original sigue intacto.")
+
             with open(ruta_encontrada, "w", encoding="utf-8") as f:
                 f.write(codigo_nuevo)
-            threading.Thread(target=ejecutar_reinicio, args=(nombre_archivo,), daemon=True).start()
-            return f"Archivo {nombre_archivo} modificado quirúrgicamente. Reiniciando núcleo..."
+
+            # Las herramientas de actions/ se recargan EN CALIENTE (main.py vuelve a
+            # descubrirlas al terminar esta tarea): no hace falta reiniciar nada.
+            # Solo los archivos del núcleo (ui.py, main.py...) exigen reinicio.
+            en_actions = os.path.basename(os.path.dirname(os.path.abspath(ruta_encontrada))) == "actions"
+            if en_actions:
+                return (f"Archivo {nombre_archivo} modificado quirúrgicamente. La herramienta "
+                        "se recargará sola: ya se puede usar, sin reiniciar nada.")
+            return (f"{MARCA_REINICIO} Archivo del núcleo {nombre_archivo} modificado quirúrgicamente. "
+                    "La interfaz se reiniciará sola en cuanto termine este aviso y la conversación "
+                    "continuará donde estaba.")
         else:
             return "Error: La IA no pudo aplicar los cambios al archivo."
 

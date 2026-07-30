@@ -25,5 +25,8 @@ config/neural_meta.json
 config/voice_profile.npz
 config/voice_profile.npz.bak
 
+# Asa temporal para retomar la conversación tras un reinicio del núcleo
+config/session_reanudar.json
+
 # Captura temporal del módulo de visión
 temp_vision.png
