@@ -236,7 +236,6 @@
 <div id="tira"></div>
 
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
-<script src="cara_datos.js"></script>
 <script>
 "use strict";
 /* ══════════════ Estado global ══════════════ */
@@ -619,220 +618,68 @@ function marco(tNow) {
 }
 requestAnimationFrame(marco);
 
-/* ══════════════ NÚCLEO 3D (WebGL puro, sin librerías) ══════════════
-   Esfera de 12.000 partículas que, cuando I.R.I.S. HABLA, se transforma en un
-   ROSTRO cuyo labio inferior y mandíbula se mueven con el nivel real de su voz. */
+/* ══════════════ NÚCLEO 3D: ORBE DE PARTÍCULAS (WebGL puro) ══════════════
+   Una esfera de ~12.000 partículas que respira y, cuando I.R.I.S habla, se
+   encrespa con ondas cuya amplitud, tamaño y brillo los manda el NIVEL REAL de
+   su voz (senal_voz desde _play_audio). Sin librerías externas. */
 const cv3 = document.getElementById("fx3d");
-let gl3 = null, n3 = 0, nLineas3 = 0, bufLineas3 = {}, bufPuntos3 = {}, morph3 = 0, apert3 = 0;
+let gl3 = null, n3 = 0;
 const loc3 = {};
 const DPR3 = Math.min(devicePixelRatio || 1, 1.5);
 
-const b64Bytes = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
-const b64F32 = s => new Float32Array(b64Bytes(s).buffer);
-const b64U16 = s => new Uint16Array(b64Bytes(s).buffer);
-
-function zSurf(x, y, A, B, C) {
-  return C * Math.sqrt(Math.max(0.02, 1 - (x / A) * (x / A) - (y / B) * (y / B)));
-}
-
-function generarObjetivos(n) {
-  const esfera = new Float32Array(n * 3), cara = new Float32Array(n * 3);
-  const labio = new Float32Array(n), brillo = new Float32Array(n), tam = new Float32Array(n);
-  const A = 7.6, B = 10.2, C = 7.0;   // radios del cráneo (máscara frontal)
-  const dentroOjo = (x, y) => {
-    const dy = (y - 3.0) / 1.2, d1 = (x - 3.0) / 2.05, d2 = (x + 3.0) / 2.05;
-    return d1 * d1 + dy * dy < 1 || d2 * d2 + dy * dy < 1;
-  };
-  const dentroBoca = (x, y) => Math.abs(x) < 3.15 && y > -6.1 && y < -2.85;
-  const dentroNariz = (x, y) => Math.abs(x) < 0.85 && y > -2.1 && y < 3.3;
-
-  for (let i = 0; i < n; i++) {
-    // ---- forma base: esfera de radio ~10 ----
-    const th = Math.random() * Math.PI * 2, cph = Math.random() * 2 - 1, sph = Math.sqrt(1 - cph * cph);
-    const r0 = 9.3 + Math.random();
-    esfera[i * 3] = r0 * sph * Math.cos(th);
-    esfera[i * 3 + 1] = r0 * sph * Math.sin(th);
-    esfera[i * 3 + 2] = r0 * cph;
-
-    // ---- forma objetivo: el rostro ----
-    const rol = Math.random();
-    let x = 0, y = 0, z = 0, w = 0, b = 0.6, s = 0.24 + Math.random() * 0.2;
-    if (rol < 0.26) {                          // máscara facial DISPERSA (los rasgos mandan)
-      let intentos = 0;
-      do {
-        x = (Math.random() * 2 - 1) * A;
-        y = (Math.random() * 2 - 1) * B;
-        intentos++;
-      } while ((x * x / (A * A) + y * y / (B * B) > 0.94 || dentroOjo(x, y) || dentroBoca(x, y) || dentroNariz(x, y)) && intentos < 40);
-      z = zSurf(x, y, A, B, C) + (Math.random() - 0.5) * 0.5;
-      b = 0.13 + Math.random() * 0.13;
-      s = 0.13 + Math.random() * 0.10;
-      if (y < -5.4) w = Math.min(1, (-5.4 - y) / 3.6) * 0.5;   // mandíbula: cae al hablar
-    } else if (rol < 0.40) {                   // aura: nube tenue alrededor de la cabeza
-      const t2 = Math.random() * Math.PI * 2, c2 = Math.random() * 1.6 - 0.6;
-      const s2 = Math.sqrt(Math.max(0, 1 - c2 * c2));
-      const f = 1.06 + Math.random() * 0.5;
-      x = A * f * s2 * Math.cos(t2);
-      y = B * f * c2;
-      z = Math.abs(C * f * s2 * Math.sin(t2)) * 0.7;
-      b = 0.07 + Math.random() * 0.09; s = 0.10 + Math.random() * 0.09;
-    } else if (rol < 0.54) {                   // contorno de la silueta (borde del rostro)
-      const t = Math.random() * Math.PI * 2;
-      const rr = 0.955 + Math.random() * 0.035;
-      x = A * rr * Math.cos(t);
-      y = B * rr * Math.sin(t);
-      z = zSurf(x, y, A, B, C) + 0.15;
-      b = 0.9 + Math.random() * 0.25; s = 0.26 + Math.random() * 0.16;
-      if (y < -5.4) w = Math.min(1, (-5.4 - y) / 3.6) * 0.5;   // el mentón acompaña
-    } else if (rol < 0.63) {                   // contorno almendrado de los ojos
-      const cxo = Math.random() < 0.5 ? -3.0 : 3.0;
-      const t = Math.random() * Math.PI * 2;
-      x = cxo + 2.0 * Math.cos(t);
-      y = 3.0 + 1.02 * Math.sin(t) * (0.62 + 0.38 * Math.abs(Math.cos(t)));
-      z = zSurf(x, y, A, B, C) + 0.3; b = 1.0; s = 0.3 + Math.random() * 0.2;
-    } else if (rol < 0.68) {                   // iris brillante
-      const cxo = Math.random() < 0.5 ? -3.0 : 3.0;
-      const t = Math.random() * Math.PI * 2, rr = 0.30 + Math.random() * 0.42;
-      x = cxo + rr * Math.cos(t); y = 3.0 + rr * 0.85 * Math.sin(t);
-      z = zSurf(x, y, A, B, C) + 0.42; b = 1.35; s = 0.3 + Math.random() * 0.25;
-    } else if (rol < 0.73) {                   // cejas
-      const cxo = Math.random() < 0.5 ? -3.05 : 3.05;
-      const u = Math.random() * 2 - 1;
-      x = cxo + 2.25 * u;
-      y = 4.85 + 0.5 * (1 - u * u) + (Math.random() - 0.5) * 0.22;
-      z = zSurf(x, y, A, B, C) + 0.28; b = 0.95;
-    } else if (rol < 0.81) {                   // nariz: caballete, punta y aletas
-      if (Math.random() < 0.78) {
-        const p = Math.random();
-        y = 3.1 - 5.1 * p;
-        x = (Math.random() * 2 - 1) * (0.10 + 0.30 * p);
-        const punta = Math.exp(-Math.pow(p - 0.86, 2) / 0.018);
-        z = zSurf(x, y, A, B, C) + 0.45 + 1.15 * punta;
-        b = 0.55 + punta * 0.5;
-      } else {
-        const lado = Math.random() < 0.5 ? -1 : 1;
-        const t = Math.random() * Math.PI;
-        x = lado * (0.78 + 0.5 * Math.sin(t));
-        y = -1.55 - 0.35 * Math.sin(t * 0.5);
-        z = zSurf(x, y, A, B, C) + 0.55; b = 0.85;
-      }
-    } else {                                   // 💋 labios: la boca que habla
-      const u = Math.random() * 2 - 1;
-      x = 2.62 * u;
-      const ym = -4.15, ancho = 1 - u * u;
-      if (Math.random() < 0.38) {              // labio superior fino con arco de cupido (casi fijo)
-        const arco = 0.30 * ancho + 0.10 * Math.cos(u * 4.6);
-        y = ym + 0.10 + Math.max(0.02, arco) * Math.random();
-        w = 0.08;
-      } else {                                 // labio inferior: el que baila con la voz
-        const caida = 0.14 + 0.60 * ancho;
-        y = ym - 0.08 - caida * Math.random();
-        w = 0.9 + Math.random() * 0.1;
-      }
-      z = zSurf(x, y, A, B, C) + 0.55;
-      b = 1.05 + Math.random() * 0.15; s = 0.3 + Math.random() * 0.22;
-    }
-    cara[i * 3] = x; cara[i * 3 + 1] = y; cara[i * 3 + 2] = z;
-    labio[i] = w; brillo[i] = b; tam[i] = s;
-  }
-  return { esfera, cara, labio, brillo, tam };
-}
-
 const VSH3 = `
-attribute vec3 aEsfera; attribute vec3 aCara;
-attribute float aLabio; attribute float aBrillo; attribute float aTam;
-uniform float uT, uMorph, uAp, uEnergia, uEscala, uPuntos;
-uniform vec2 uBisagra;           // eje real de la articulacion de la mandibula
-uniform vec2 uEncuadre;          // escala y desplazamiento vertical del rostro
+attribute vec3 aDir;          // punto sobre la esfera unitaria
+attribute float aSem;         // semilla de fase propia de cada partícula
+uniform float uT, uEnergia, uVoz, uEscala, uPuntos;
 uniform mat3 uRot;
 varying float vB;
 void main(){
-  vec3 e = aEsfera * (1.0 + 0.05*sin(uT*1.3 + aEsfera.y*0.5) + uEnergia*0.13);
-  vec3 c = aCara;
-  // 🦴 La mandibula ROTA sobre su bisagra (como una boca real): el menton baja
-  // y retrocede en arco. Antes era una traslacion recta y se notaba falso.
-  float ang = aLabio * uAp * 0.42;
-  float dy = c.y - uBisagra.x, dz = c.z - uBisagra.y;
-  c.y = uBisagra.x + dy*cos(ang) - dz*sin(ang);
-  c.z = uBisagra.y + dy*sin(ang) + dz*cos(ang);
-  c = c * uEncuadre.x + vec3(0.0, uEncuadre.y, 0.0);   // encuadre del rostro
-  float m = clamp(uMorph*1.3 - fract(aTam*57.31)*0.3, 0.0, 1.0);
-  m = m*m*(3.0-2.0*m);             // cada particula llega con su propio desfase
-  vec3 p = uRot * mix(e, c, m);
-  float wz = 36.0 - p.z;
+  vec3 d = aDir;
+  // Tres ondas viajando por la esfera; su relieve lo manda la voz.
+  float o1 = sin(d.y*3.6 - uT*2.4 + aSem*6.283);
+  float o2 = sin(d.x*2.9 + d.z*2.3 + uT*1.7);
+  float o3 = sin(length(d.xz)*5.1 - uT*3.1 + aSem*3.0);
+  float onda = o1*0.45 + o2*0.35 + o3*0.20;
+
+  float r = 9.5 * (1.0
+          + uEnergia*0.16                          // respiración general
+          + onda*uVoz*0.34                         // se encrespa al hablar
+          + sin(uT*0.9 + aSem*6.283)*0.018);       // vida propia en reposo
+
+  vec3 p = uRot * (d * r);
+  float wz = 34.0 - p.z;
   gl_Position = vec4(p.x*uEscala, p.y*uEscala, 0.0, wz);
-  gl_PointSize = aTam * uPuntos / wz;
-  vB = aBrillo;
+  gl_PointSize = (0.42 + uVoz*0.55 + uEnergia*0.18) * uPuntos / wz;
+
+  float destello = 0.5 + 0.5*sin(uT*2.2 + aSem*6.283);
+  vB = 0.28 + 0.42*destello + 0.55*abs(onda)*uVoz;
 }`;
+
 const FSH3 = `
 precision mediump float;
 uniform vec3 uColor;
-uniform float uLinea, uVelo;   // uVelo: las lineas plexus solo existen en el rostro
 varying float vB;
 void main(){
-  vec2 d = gl_PointCoord - vec2(0.5);
-  float mascara = smoothstep(0.5, 0.16, length(d));
-  // curva agresiva en puntos: lo tenue casi desaparece, los rasgos brillan
-  float aPunto = mascara * (0.10 + 0.68*vB*vB);
-  float aLinea = (0.035 + 0.20*vB*vB) * uVelo;   // la malla resalta donde brilla el contorno
-  float a = mix(aPunto, aLinea, uLinea);
-  gl_FragColor = vec4(uColor*(0.45+0.75*vB), a);
+  vec2 q = gl_PointCoord - vec2(0.5);
+  float a = smoothstep(0.5, 0.10, length(q));
+  gl_FragColor = vec4(uColor*(0.50 + 0.70*vB), a*(0.16 + 0.70*vB*vB));
 }`;
 
-function generarDesdeHorneado(D) {
-  // La cabeza humana esculpida con SDF en Python (assets/cara_datos.js)
-  const n = D.n;
-  const cara = b64F32(D.p);
-  const w8 = b64Bytes(D.w), b8 = b64Bytes(D.b);
-  const esfera = new Float32Array(n * 3);
-  const labio = new Float32Array(n), brillo = new Float32Array(n), tam = new Float32Array(n);
+function generarEsfera(n) {
+  // Distribución de Fibonacci: reparte los puntos sin acumularlos en los polos.
+  const dir = new Float32Array(n * 3), sem = new Float32Array(n);
+  const paso = Math.PI * (3 - Math.sqrt(5));
   for (let i = 0; i < n; i++) {
-    const th = Math.random() * Math.PI * 2, cph = Math.random() * 2 - 1, sph = Math.sqrt(1 - cph * cph);
-    const r0 = 9.3 + Math.random();
-    esfera[i * 3] = r0 * sph * Math.cos(th);
-    esfera[i * 3 + 1] = r0 * sph * Math.sin(th);
-    esfera[i * 3 + 2] = r0 * cph;
-    labio[i] = w8[i] / 255;
-    brillo[i] = (b8[i] / 255) * 1.4;
-    tam[i] = 0.17 + Math.random() * 0.20;
+    const y = 1 - (i / (n - 1)) * 2;
+    const rr = Math.sqrt(Math.max(0, 1 - y * y));
+    const th = paso * i;
+    // pizca de desorden para que no se lea el patrón en espiral
+    dir[i * 3]     = Math.cos(th) * rr + (Math.random() - 0.5) * 0.03;
+    dir[i * 3 + 1] = y            + (Math.random() - 0.5) * 0.03;
+    dir[i * 3 + 2] = Math.sin(th) * rr + (Math.random() - 0.5) * 0.03;
+    sem[i] = Math.random();
   }
-  return { esfera, cara, labio, brillo, tam, aristas: b64U16(D.e) };
-}
-
-const ATTR3 = { aEsfera: 3, aCara: 3, aLabio: 1, aBrillo: 1, aTam: 1 };
-let atr3 = {};
-
-function crearBuffers(d) {
-  const mk = arr => {
-    const b = gl3.createBuffer();
-    gl3.bindBuffer(gl3.ARRAY_BUFFER, b);
-    gl3.bufferData(gl3.ARRAY_BUFFER, arr, gl3.STATIC_DRAW);
-    return b;
-  };
-  return { aEsfera: mk(d.esfera), aCara: mk(d.cara), aLabio: mk(d.labio), aBrillo: mk(d.brillo), aTam: mk(d.tam) };
-}
-
-function activar3(bufs) {
-  for (const nombre in ATTR3) {
-    gl3.bindBuffer(gl3.ARRAY_BUFFER, bufs[nombre]);
-    gl3.enableVertexAttribArray(atr3[nombre]);
-    gl3.vertexAttribPointer(atr3[nombre], ATTR3[nombre], gl3.FLOAT, false, 0, 0);
-  }
-}
-
-function crearBuffersLineas(d) {
-  // Red plexus: cada arista duplica los atributos de sus dos extremos
-  const e = d.aristas, m = e.length;
-  const esf = new Float32Array(m * 3), car = new Float32Array(m * 3);
-  const lab = new Float32Array(m), bri = new Float32Array(m), tm = new Float32Array(m);
-  for (let k = 0; k < m; k++) {
-    const i = e[k];
-    esf.set(d.esfera.subarray(i * 3, i * 3 + 3), k * 3);
-    car.set(d.cara.subarray(i * 3, i * 3 + 3), k * 3);
-    lab[k] = d.labio[i]; bri[k] = d.brillo[i]; tm[k] = d.tam[i];
-  }
-  nLineas3 = m;
-  return crearBuffers({ esfera: esf, cara: car, labio: lab, brillo: bri, tam: tm });
+  return { dir, sem };
 }
 
 function iniciar3D() {
@@ -850,33 +697,22 @@ function iniciar3D() {
   if (!gl3.getProgramParameter(prog, gl3.LINK_STATUS)) throw new Error(gl3.getProgramInfoLog(prog));
   gl3.useProgram(prog);
 
-  for (const nombre in ATTR3) atr3[nombre] = gl3.getAttribLocation(prog, nombre);
+  n3 = Math.round(14000 * Math.max(0.45, S.calidad));
+  const d = generarEsfera(n3);
+  const sube = (nombre, arr, comp) => {
+    const b = gl3.createBuffer();
+    gl3.bindBuffer(gl3.ARRAY_BUFFER, b);
+    gl3.bufferData(gl3.ARRAY_BUFFER, arr, gl3.STATIC_DRAW);
+    const l = gl3.getAttribLocation(prog, nombre);
+    gl3.enableVertexAttribArray(l);
+    gl3.vertexAttribPointer(l, comp, gl3.FLOAT, false, 0, 0);
+  };
+  sube("aDir", d.dir, 3);
+  sube("aSem", d.sem, 1);
 
-  // Cabeza humana horneada si existe; si no, la máscara procedural de respaldo
-  const horneada = window.CARA_DATOS && window.CARA_DATOS.p;
-  const d = horneada ? generarDesdeHorneado(window.CARA_DATOS)
-                     : generarObjetivos(Math.round(12000 * Math.max(0.5, S.calidad)));
-  n3 = d.esfera.length / 3;
-  bufPuntos3 = crearBuffers(d);
-  if (d.aristas) bufLineas3 = crearBuffersLineas(d);
-
-  for (const u of ["uT", "uMorph", "uAp", "uEnergia", "uEscala", "uPuntos", "uRot",
-                   "uColor", "uLinea", "uVelo", "uBisagra", "uEncuadre"])
+  for (const u of ["uT", "uEnergia", "uVoz", "uEscala", "uPuntos", "uRot", "uColor"])
     loc3[u] = gl3.getUniformLocation(prog, u);
-  const bis = (window.CARA_DATOS && window.CARA_DATOS.bisagra) || [0, 0];
-  gl3.uniform2f(loc3.uBisagra, bis[0], bis[1]);
 
-  // 🎯 Encuadre automático: la cabeza horneada incluye cuello, así que se escala
-  // y sube para que la CARA (ojos→mentón) ocupe el mismo hueco que la esfera.
-  if (horneada) {
-    const c = d.cara;
-    let yMin = 1e9, yMax = -1e9;
-    for (let i = 1; i < c.length; i += 3) { if (c[i] < yMin) yMin = c[i]; if (c[i] > yMax) yMax = c[i]; }
-    const yOjos = yMax - (yMax - yMin) * 0.30;       // altura aproximada de los ojos
-    const yBoca = yMin + (yMax - yMin) * 0.28;       // altura aproximada de la boca
-    const centroCara = (yOjos + yBoca) / 2;
-    S.encuadre = [1.30, -centroCara * 1.30];
-  }
   gl3.disable(gl3.DEPTH_TEST);
   gl3.enable(gl3.BLEND);
   gl3.blendFunc(gl3.SRC_ALPHA, gl3.ONE);   // brillo aditivo
@@ -897,14 +733,9 @@ function medir3D() {
 function dibujar3D(tNow, dt, energia) {
   if (!S.webgl) return;
   const t = tNow / 1000;
-  const habla = S.estado === "SPEAKING";
-  morph3 += ((habla ? 1 : 0) - morph3) * (habla ? 0.05 : 0.06) * dt;
-  const apObjetivo = habla ? Math.min(1, S.vozSuave * 1.5) : 0;
-  apert3 += (apObjetivo - apert3) * (apObjetivo > apert3 ? 0.55 : 0.3) * dt;
 
-  // esfera: giro perezoso · rostro: tres cuartos con vaivén sutil (como la referencia)
-  const ry = Math.sin(t * 0.2) * 0.5 * (1 - morph3) + (-0.44 + Math.sin(t * 0.5) * 0.05) * morph3;
-  const rx = Math.cos(t * 0.2) * 0.3 * (1 - morph3) + (0.03 + Math.sin(t * 0.85) * 0.03) * morph3;
+  // giro perezoso, como el orbe original
+  const ry = Math.sin(t * 0.2) * 0.5, rx = Math.cos(t * 0.2) * 0.3;
   const cy = Math.cos(ry), sy = Math.sin(ry), cxr = Math.cos(rx), sxr = Math.sin(rx);
   const rot = new Float32Array([
     cy, 0, -sy,
@@ -915,24 +746,12 @@ function dibujar3D(tNow, dt, energia) {
   gl3.clearColor(0, 0, 0, 0);
   gl3.clear(gl3.COLOR_BUFFER_BIT);
   gl3.uniform1f(loc3.uT, t);
-  gl3.uniform1f(loc3.uMorph, morph3);
-  gl3.uniform1f(loc3.uAp, apert3);
   gl3.uniform1f(loc3.uEnergia, energia);
+  gl3.uniform1f(loc3.uVoz, S.estado === "SPEAKING" ? S.vozSuave : 0.0);
   gl3.uniform1f(loc3.uEscala, 2.125);
   gl3.uniform1f(loc3.uPuntos, cv3.height * 2.125 * 0.5);
   gl3.uniformMatrix3fv(loc3.uRot, false, rot);
   gl3.uniform3f(loc3.uColor, S.pri[0] / 255, S.pri[1] / 255, S.pri[2] / 255);
-  gl3.uniform1f(loc3.uVelo, morph3);
-  gl3.uniform2f(loc3.uEncuadre, S.encuadre[0], S.encuadre[1]);
-
-  // la red plexus primero (solo visible en el rostro), los puntos encima
-  if (nLineas3 > 0 && morph3 > 0.02) {
-    activar3(bufLineas3);
-    gl3.uniform1f(loc3.uLinea, 1);
-    gl3.drawArrays(gl3.LINES, 0, nLineas3);
-  }
-  activar3(bufPuntos3);
-  gl3.uniform1f(loc3.uLinea, 0);
   gl3.drawArrays(gl3.POINTS, 0, n3);
 }
 
@@ -946,6 +765,7 @@ try {
   console.warn("Sin WebGL: me quedo con el núcleo 2D.", e);
   S.webgl = false;
 }
+
 
 /* reloj propio de respaldo (Python lo pisa cada segundo con su zona horaria) */
 setInterval(() => {
